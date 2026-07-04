@@ -37,6 +37,33 @@ By default the bot identity is:
 - display name: `OpenRouter Bot`
 - owner email: `bot-openai-compatible@kriegspiel.org`
 
+## Multiple Model Instances
+
+Use separate env and state files when running one independent bot per model:
+
+```bash
+python bot.py \
+  --env-file instances/gemini-flash-lite.env \
+  --state-file instances/gemini-flash-lite-state.json \
+  --register
+
+python bot.py \
+  --env-file instances/gemini-flash-lite.env \
+  --state-file instances/gemini-flash-lite-state.json
+```
+
+Each instance env must have its own Kriegspiel bot identity:
+
+```env
+KRIEGSPIEL_BOT_USERNAME=openrouter_gemini_flash_lite
+KRIEGSPIEL_BOT_DISPLAY_NAME=OpenRouter Gemini Flash-Lite
+KRIEGSPIEL_BOT_OWNER_EMAIL=bot-openai-compatible@kriegspiel.org
+KRIEGSPIEL_BOT_DESCRIPTION=OpenRouter Gemini Flash-Lite Kriegspiel model bot.
+LLM_MODEL=google/gemini-2.5-flash-lite
+```
+
+The shared provider key can be copied from the base production `.env`, but each instance should keep its own `KRIEGSPIEL_BOT_TOKEN` or state file.
+
 ## Provider Config
 
 Required:
