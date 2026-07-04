@@ -1,0 +1,14 @@
+[Unit]
+Description=Kriegspiel OpenAI-compatible Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/dev/kriegspiel/bot-openai-compatible
+ExecStart=/home/ubuntu/dev/kriegspiel/bot-openai-compatible/.venv/bin/python /home/ubuntu/dev/kriegspiel/bot-openai-compatible/bot.py --poll-seconds 2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
