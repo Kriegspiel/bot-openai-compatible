@@ -620,15 +620,32 @@ def resign_after_move_number() -> int:
         return DEFAULT_RESIGN_AFTER_MOVE_NUMBER
 
 
+def move_limit_for_state(state: dict[str, Any]) -> int:
+    if "llm_bot_ply_limit" not in state:
+        return resign_after_move_number()
+
+    raw = state.get("llm_bot_ply_limit")
+    if raw is None:
+        return 0
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return resign_after_move_number()
+
+
+def completed_ply_count_for_state(state: dict[str, Any]) -> int:
+    raw = state.get("ply_count") if "ply_count" in state else state.get("move_number")
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def should_resign_for_move_limit(state: dict[str, Any]) -> bool:
-    limit = resign_after_move_number()
+    limit = move_limit_for_state(state)
     if limit <= 0:
         return False
-    try:
-        move_number = int(state.get("move_number", 0) or 0)
-    except (TypeError, ValueError):
-        return False
-    return move_number >= limit
+    return completed_ply_count_for_state(state) >= limit
 
 
 def extract_recent_referee_items(scoresheet: dict[str, Any], *, limit: int = 8) -> list[str]:
@@ -1175,8 +1192,8 @@ def maybe_play_game(game_id: str) -> bool:
             logger.info(
                 "%s: resigned at move %s after reaching move limit %s -> %s",
                 game_id,
-                state.get("move_number"),
-                resign_after_move_number(),
+                completed_ply_count_for_state(state),
+                move_limit_for_state(state),
                 result.get("result"),
             )
             return True
