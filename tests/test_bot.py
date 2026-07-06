@@ -362,6 +362,44 @@ class BotTests(unittest.TestCase):
         ):
             self.assertAlmostEqual(bot.llm_usage_cost_usd(usage), 0.000153)
 
+    def test_log_llm_usage_reports_backend_usage_when_token_configured(self) -> None:
+        payload = {
+            "id": "chatcmpl_1",
+            "usage": {"prompt_tokens": 1000, "prompt_tokens_details": {"cached_tokens": 400}, "completion_tokens": 20},
+        }
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "KRIEGSPIEL_BOT_TOKEN": "token",
+                "LLM_INPUT_USD_PER_MILLION_TOKENS": "0.20",
+                "LLM_CACHED_INPUT_USD_PER_MILLION_TOKENS": "0.02",
+                "LLM_OUTPUT_USD_PER_MILLION_TOKENS": "1.25",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot, "post_json", return_value={"ok": True}) as post_json:
+                bot.log_llm_usage(game_id="gid1", model="provider/model", payload=payload)
+                expected_cost = bot.llm_usage_cost_usd(payload["usage"])
+
+        post_json.assert_called_once()
+        path, usage_payload = post_json.call_args.args
+        self.assertEqual(path, "/bots/usage")
+        self.assertEqual(
+            usage_payload,
+            {
+                "game_id": "gid1",
+                "provider": "openrouter",
+                "model": "provider/model",
+                "response_id": "chatcmpl_1",
+                "input_tokens": 1000,
+                "cached_input_tokens": 400,
+                "output_tokens": 20,
+                "total_tokens": 1020,
+                "cost_usd": expected_cost,
+            },
+        )
+
     def test_choose_ranked_actions_is_stateless(self) -> None:
         state = {
             "rule_variant": "berkeley_any",
