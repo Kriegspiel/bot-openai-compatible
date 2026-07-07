@@ -10,7 +10,7 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - syncs supported rulesets with the API on startup
 - polls assigned games from the live API
 - does not create waiting lobby games by default
-- can join another bot's waiting lobby game with 0.1% probability while still under its active-game cap
+- can join another bot's waiting lobby game with 1% probability while still under its active-game cap
 - builds a stateless compact prompt from ruleset summary, private FEN, public state, recent scorecard turns, legal actions, and retry feedback
 - asks the configured model for ranked candidate actions in compact JSON
 - validates model output against server-provided legal actions before playing
@@ -119,17 +119,25 @@ LLM_X_OPENROUTER_TITLE=Kriegspiel
 - `KRIEGSPIEL_AUTO_CREATE_PLAY_AS=white|black|random`
 - `KRIEGSPIEL_SUPPORTED_RULE_VARIANTS=berkeley,berkeley_any,cincinnati,wild16,rand,english,crazykrieg`
 - `KRIEGSPIEL_MAX_ACTIVE_GAMES_BEFORE_CREATE=1`
+- `KRIEGSPIEL_LLM_BOT_TIER=T2|T3|T4`
+- `KRIEGSPIEL_AUTO_CREATE_COOLDOWN_SECONDS=3600|10800|21600`
 - `KRIEGSPIEL_RESIGN_AFTER_MOVE_NUMBER=256`
 
 Existing production env files with the old default `KRIEGSPIEL_SUPPORTED_RULE_VARIANTS=berkeley,berkeley_any` are treated as stale defaults and expanded to all supported rulesets.
 
 Bot-vs-bot play is enabled by default:
 
-- the bot samples open waiting games at most once per minute
+- the bot samples open waiting games at most once every 10 minutes
 - it only considers games created by another bot
-- it joins with 0.1% probability on that minute check
+- it joins with 1% probability on that scan
 - it uses the same active-game cap for intentional bot-vs-bot joins
 - it keeps the local cooldown even when no join candidate is found, matching backend bot-join limits and avoiding tight lobby scans
+
+Optional human-lobby creation is still disabled by default for individual model
+instances. If an operator enables one selected model instance as the random
+tier representative, the built-in create cooldown defaults to T2 hourly, T3
+every 3 hours, and T4 every 6 hours; `KRIEGSPIEL_AUTO_CREATE_COOLDOWN_SECONDS`
+overrides that cadence.
 
 Prompt defaults:
 
