@@ -247,6 +247,18 @@ class BotTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"LLM_BOT_MAX_CONCURRENT_MODEL_CALLS": "invalid"}):
             self.assertEqual(bot.max_concurrent_model_calls(), 5)
 
+    def test_active_game_discovery_limit_parses_default_and_custom_env(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(bot.active_game_discovery_limit(), 100)
+        with mock.patch.dict("os.environ", {"KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT": "40"}):
+            self.assertEqual(bot.active_game_discovery_limit(), 40)
+        with mock.patch.dict("os.environ", {"KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT": "0"}):
+            self.assertEqual(bot.active_game_discovery_limit(), 1)
+        with mock.patch.dict("os.environ", {"KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT": "250"}):
+            self.assertEqual(bot.active_game_discovery_limit(), 100)
+        with mock.patch.dict("os.environ", {"KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT": "invalid"}):
+            self.assertEqual(bot.active_game_discovery_limit(), 100)
+
     def test_turn_snapshot_includes_at_least_ten_recent_turns_when_available(self) -> None:
         turns = [
             {
@@ -845,7 +857,13 @@ class BotTests(unittest.TestCase):
 
         scheduler.reconcile([{"state": "active", "game_id": "g2"}])
 
-        self.assertEqual(created["g1"].stopped, 1)
+        self.assertEqual(created["g1"].stopped, 0)
+        self.assertIn("g1", scheduler.runners)
+        self.assertIn("g2", scheduler.runners)
+
+        created["g1"].alive = False
+        scheduler.reconcile([{"state": "active", "game_id": "g2"}])
+
         self.assertNotIn("g1", scheduler.runners)
         self.assertIn("g2", scheduler.runners)
 

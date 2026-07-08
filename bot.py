@@ -43,6 +43,7 @@ BOT_GAME_PICK_PROBABILITY = 0.01
 DEFAULT_MODEL_BATCH_SIZE = 10
 DEFAULT_MAX_MODEL_BATCHES_PER_TURN = 5
 DEFAULT_MAX_CONCURRENT_MODEL_CALLS = 5
+DEFAULT_ACTIVE_GAME_DISCOVERY_LIMIT = 100
 DEFAULT_RESIGN_AFTER_MOVE_NUMBER = 256
 DEFAULT_LLM_MAX_PROMPT_TURNS = 10
 DEFAULT_LLM_MAX_OUTPUT_TOKENS = 512
@@ -150,6 +151,14 @@ def max_concurrent_model_calls() -> int:
         return max(1, int(raw))
     except ValueError:
         return DEFAULT_MAX_CONCURRENT_MODEL_CALLS
+
+
+def active_game_discovery_limit() -> int:
+    raw = os.environ.get("KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT", str(DEFAULT_ACTIVE_GAME_DISCOVERY_LIMIT)).strip()
+    try:
+        return max(1, min(100, int(raw)))
+    except ValueError:
+        return DEFAULT_ACTIVE_GAME_DISCOVERY_LIMIT
 
 
 def configure_model_call_semaphore(limit: int | None = None) -> threading.BoundedSemaphore:
@@ -1546,9 +1555,9 @@ class GameRunnerScheduler:
         for game_id, runner in list(self.runners.items()):
             if game_id in active_ids:
                 continue
-            logger.info("%s: stopping game runner after active-game discovery removed it", game_id)
-            runner.stop()
-            runner.join(timeout=1.0)
+            if runner.is_alive():
+                continue
+            runner.join(timeout=0)
             self.runners.pop(game_id, None)
 
         self.prune_finished()
@@ -1571,13 +1580,15 @@ class GameRunnerScheduler:
 def run_loop(poll_seconds: float) -> None:
     concurrency = max_concurrent_model_calls()
     configure_model_call_semaphore(concurrency)
+    discovery_limit = active_game_discovery_limit()
     logger.info("model-call concurrency configured: max=%s", concurrency)
+    logger.info("active-game discovery limit configured: max=%s", discovery_limit)
     scheduler = GameRunnerScheduler(poll_seconds=poll_seconds)
     try:
         while True:
             try:
                 report_current_model_availability()
-                mine = get_json("/game/mine/active")
+                mine = get_json(f"/game/mine/active?limit={discovery_limit}")
                 games = mine.get("games", [])
                 maybe_create_lobby_game(games)
                 maybe_join_bot_lobby_game(games)

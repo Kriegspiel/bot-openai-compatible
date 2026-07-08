@@ -121,6 +121,7 @@ LLM_X_OPENROUTER_TITLE=Kriegspiel
 - `KRIEGSPIEL_AUTO_CREATE_RULE_VARIANT=berkeley|berkeley_any|cincinnati|wild16|rand|english|crazykrieg`
 - `KRIEGSPIEL_AUTO_CREATE_PLAY_AS=white|black|random`
 - `KRIEGSPIEL_SUPPORTED_RULE_VARIANTS=berkeley,berkeley_any,cincinnati,wild16,rand,english,crazykrieg`
+- `KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT=100`
 - `KRIEGSPIEL_MAX_ACTIVE_GAMES_BEFORE_CREATE=1`
 - `KRIEGSPIEL_LLM_BOT_TIER=T2|T3|T4`
 - `KRIEGSPIEL_AUTO_CREATE_COOLDOWN_SECONDS=3600|10800|21600`
@@ -145,6 +146,13 @@ globally throttled, but provider model calls are guarded by
 `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS`, which defaults to `5`. This prevents large
 tournament batches from timing out behind one serial model loop while avoiding a
 process-per-game deployment shape.
+
+Active-game discovery requests `/game/mine/active` with
+`KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT`, defaulting to `100`, so tournament
+batches larger than the backend's human-facing default list size still get
+runners for every assigned game. Already-running game runners are allowed to
+keep polling their own game even if a later discovery response omits them; the
+runner stops itself when the game completes or becomes unavailable.
 
 Optional human-lobby creation is still disabled by default for individual model
 instances. If an operator enables one selected model instance as the random
