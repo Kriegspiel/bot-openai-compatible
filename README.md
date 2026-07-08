@@ -14,7 +14,8 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - builds a stateless compact prompt from ruleset summary, private FEN, public state, recent scorecard turns, legal actions, and retry feedback
 - asks the configured model for ranked candidate actions in compact JSON
 - validates model output against server-provided legal actions before playing
-- resigns instead of asking the model once the server-reported move number reaches 256
+- honors explicit server-reported ply caps before asking the model; current
+  bot-vs-bot LLM game caps are backend-enforced completed-turn limits
 - checks model availability with a tiny cached Chat Completions preflight before joining new bot-vs-bot games
 - falls back safely if the model is missing, unavailable, or returns malformed output
 
@@ -121,7 +122,8 @@ LLM_X_OPENROUTER_TITLE=Kriegspiel
 - `KRIEGSPIEL_MAX_ACTIVE_GAMES_BEFORE_CREATE=1`
 - `KRIEGSPIEL_LLM_BOT_TIER=T2|T3|T4`
 - `KRIEGSPIEL_AUTO_CREATE_COOLDOWN_SECONDS=3600|10800|21600`
-- `KRIEGSPIEL_RESIGN_AFTER_MOVE_NUMBER=256`
+- `KRIEGSPIEL_RESIGN_AFTER_MOVE_NUMBER=256` fallback used only when the server
+  omits an LLM bot limit field
 
 Existing production env files with the old default `KRIEGSPIEL_SUPPORTED_RULE_VARIANTS=berkeley,berkeley_any` are treated as stale defaults and expanded to all supported rulesets.
 
