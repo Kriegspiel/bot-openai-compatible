@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 import tempfile
 from pathlib import Path
 import unittest
@@ -14,6 +16,7 @@ class BotTests(unittest.TestCase):
     def setUp(self) -> None:
         bot._LLM_PREFLIGHT_CACHE.update({"ready": None, "expires_at": 0.0, "reason": "unchecked"})
         bot._MODEL_AVAILABILITY_REPORT_CACHE.update({"ready": None, "reason": "", "reported_at": 0.0})
+        bot.configure_model_call_semaphore(bot.DEFAULT_MAX_CONCURRENT_MODEL_CALLS)
         bot.load_ruleset_summary.cache_clear()
         bot.configure_runtime_paths()
 
@@ -233,6 +236,16 @@ class BotTests(unittest.TestCase):
             self.assertEqual(bot.llm_max_prompt_turns(), 12)
         with mock.patch.dict("os.environ", {"LLM_MAX_PROMPT_TURNS": "invalid"}):
             self.assertEqual(bot.llm_max_prompt_turns(), 10)
+
+    def test_max_concurrent_model_calls_parses_default_and_custom_env(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(bot.max_concurrent_model_calls(), 5)
+        with mock.patch.dict("os.environ", {"LLM_BOT_MAX_CONCURRENT_MODEL_CALLS": "3"}):
+            self.assertEqual(bot.max_concurrent_model_calls(), 3)
+        with mock.patch.dict("os.environ", {"LLM_BOT_MAX_CONCURRENT_MODEL_CALLS": "0"}):
+            self.assertEqual(bot.max_concurrent_model_calls(), 1)
+        with mock.patch.dict("os.environ", {"LLM_BOT_MAX_CONCURRENT_MODEL_CALLS": "invalid"}):
+            self.assertEqual(bot.max_concurrent_model_calls(), 5)
 
     def test_turn_snapshot_includes_at_least_ten_recent_turns_when_available(self) -> None:
         turns = [
@@ -483,6 +496,26 @@ class BotTests(unittest.TestCase):
         self.assertIn("output_tokens=20", log_output)
         self.assertIn("cost_usd=0.000153", log_output)
 
+    def test_choose_ranked_actions_falls_back_when_model_request_fails(self) -> None:
+        state = {
+            "rule_variant": "berkeley_any",
+            "your_color": "white",
+            "turn": "white",
+            "move_number": 3,
+            "your_fen": "fen",
+            "possible_actions": ["move"],
+            "allowed_moves": ["e2e4"],
+            "scoresheet": {"viewer_color": "white", "turns": []},
+        }
+
+        with mock.patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"}, clear=False):
+            with mock.patch.object(bot, "call_llm", side_effect=bot.requests.RequestException("boom")):
+                decisions, source, response_id = bot.choose_ranked_actions(state, game_id="gid1")
+
+        self.assertEqual(decisions, [{"action": "move", "uci": "e2e4"}])
+        self.assertEqual(source, "fallback")
+        self.assertIsNone(response_id)
+
     def test_new_recent_items_returns_only_suffix_delta(self) -> None:
         previous = ["Turn 1 white: Move complete", "Turn 1 black: Illegal move"]
         current = [
@@ -713,6 +746,45 @@ class BotTests(unittest.TestCase):
         self.assertEqual(payload["response_format"]["type"], "json_schema")
         self.assertEqual(payload["response_format"]["json_schema"]["name"], bot.ACTION_SCHEMA_NAME)
 
+    def test_model_call_semaphore_limits_concurrent_call_llm_execution(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": "chatcmpl_1"}
+        active_calls = 0
+        max_active_calls = 0
+        lock = threading.Lock()
+
+        def slow_post(*args, **kwargs):  # noqa: ANN002, ANN003
+            nonlocal active_calls, max_active_calls
+            with lock:
+                active_calls += 1
+                max_active_calls = max(max_active_calls, active_calls)
+            time.sleep(0.03)
+            with lock:
+                active_calls -= 1
+            return response
+
+        bot.configure_model_call_semaphore(2)
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                bot.call_llm(system_prompt="system", user_prompt="user")
+            except BaseException as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        with mock.patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"}, clear=False):
+            with mock.patch.object(bot.requests, "post", side_effect=slow_post):
+                threads = [threading.Thread(target=worker) for _ in range(5)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=1)
+
+        self.assertEqual(errors, [])
+        self.assertLessEqual(max_active_calls, 2)
+        self.assertEqual(max_active_calls, 2)
+
     def test_report_model_availability_posts_status_and_throttles_repeats(self) -> None:
         with mock.patch.object(bot, "post_json", return_value={"ok": True}) as post_json:
             self.assertTrue(bot.report_model_availability(False, "http_429: insufficient_quota"))
@@ -726,6 +798,91 @@ class BotTests(unittest.TestCase):
                 mock.call("/bots/availability", {"provider": "openai", "ready": True, "reason": "ok"}),
             ],
         )
+
+    def test_runner_scheduler_starts_one_runner_per_game_without_duplicates(self) -> None:
+        class FakeRunner:
+            def __init__(self, game_id: str) -> None:
+                self.game_id = game_id
+                self.started = 0
+                self.stopped = 0
+                self.joined = 0
+                self.alive = False
+
+            def start(self) -> None:
+                self.started += 1
+                self.alive = True
+
+            def stop(self) -> None:
+                self.stopped += 1
+                self.alive = False
+
+            def join(self, timeout: float | None = None) -> None:  # noqa: ARG002
+                self.joined += 1
+
+            def is_alive(self) -> bool:
+                return self.alive
+
+        created: dict[str, FakeRunner] = {}
+
+        def runner_factory(game_id: str) -> FakeRunner:
+            runner = FakeRunner(game_id)
+            created[game_id] = runner
+            return runner
+
+        scheduler = bot.GameRunnerScheduler(poll_seconds=0.01, runner_factory=runner_factory)
+        games = [
+            {"state": "active", "game_id": "g1"},
+            {"state": "active", "game_id": "g2"},
+            {"state": "waiting", "game_id": "w1"},
+        ]
+
+        scheduler.reconcile(games)
+        scheduler.reconcile(games)
+
+        self.assertEqual(set(created), {"g1", "g2"})
+        self.assertEqual(created["g1"].started, 1)
+        self.assertEqual(created["g2"].started, 1)
+
+        scheduler.reconcile([{"state": "active", "game_id": "g2"}])
+
+        self.assertEqual(created["g1"].stopped, 1)
+        self.assertNotIn("g1", scheduler.runners)
+        self.assertIn("g2", scheduler.runners)
+
+    def test_one_slow_game_runner_does_not_block_another_runner(self) -> None:
+        slow_started = threading.Event()
+        release_slow = threading.Event()
+        fast_played = threading.Event()
+
+        def fake_get_json(path: str) -> dict[str, str]:
+            game_id = path.split("/")[2]
+            return {"state": "active", "turn": "white", "your_color": "white", "game_id": game_id}
+
+        def fake_maybe_play_game(game_id: str) -> bool:
+            if game_id == "slow":
+                slow_started.set()
+                release_slow.wait(timeout=1)
+                return True
+            fast_played.set()
+            return True
+
+        slow_runner = bot.GameRunner("slow", poll_seconds=0.01)
+        fast_runner = bot.GameRunner("fast", poll_seconds=0.01)
+
+        with mock.patch.object(bot, "get_json", side_effect=fake_get_json):
+            with mock.patch.object(bot, "maybe_play_game", side_effect=fake_maybe_play_game):
+                slow_runner.start()
+                self.assertTrue(slow_started.wait(timeout=0.5))
+                fast_runner.start()
+                self.assertTrue(fast_played.wait(timeout=0.5))
+                slow_runner.stop()
+                fast_runner.stop()
+                release_slow.set()
+                slow_runner.join(timeout=1)
+                fast_runner.join(timeout=1)
+
+        self.assertFalse(slow_runner.is_alive())
+        self.assertFalse(fast_runner.is_alive())
 
     def test_maybe_join_bot_lobby_game_skips_join_when_llm_unavailable(self) -> None:
         games = []
