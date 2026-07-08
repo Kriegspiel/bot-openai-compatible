@@ -18,6 +18,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -41,6 +42,7 @@ BOT_JOIN_COOLDOWN_SECONDS = 600
 BOT_GAME_PICK_PROBABILITY = 0.01
 DEFAULT_MODEL_BATCH_SIZE = 10
 DEFAULT_MAX_MODEL_BATCHES_PER_TURN = 5
+DEFAULT_MAX_CONCURRENT_MODEL_CALLS = 5
 DEFAULT_RESIGN_AFTER_MOVE_NUMBER = 256
 DEFAULT_LLM_MAX_PROMPT_TURNS = 10
 DEFAULT_LLM_MAX_OUTPUT_TOKENS = 512
@@ -72,6 +74,10 @@ logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(l
 logger = logging.getLogger(__name__)
 _LLM_PREFLIGHT_CACHE = {"ready": None, "expires_at": 0.0, "reason": "unchecked"}
 _MODEL_AVAILABILITY_REPORT_CACHE = {"ready": None, "reason": "", "reported_at": 0.0}
+_STATE_LOCK = threading.RLock()
+_MODEL_CALL_SEMAPHORE_LOCK = threading.Lock()
+_MODEL_CALL_SEMAPHORE: threading.BoundedSemaphore | None = None
+_MODEL_CALL_SEMAPHORE_LIMIT = 0
 
 
 def configure_runtime_paths(*, env_path: str | Path | None = None, state_path: str | Path | None = None) -> None:
@@ -136,6 +142,31 @@ def llm_max_output_tokens() -> int:
 def llm_json_mode() -> str:
     raw = os.environ.get("LLM_JSON_MODE", DEFAULT_LLM_JSON_MODE).strip().lower()
     return raw if raw in {"json_schema", "json_object", "none"} else DEFAULT_LLM_JSON_MODE
+
+
+def max_concurrent_model_calls() -> int:
+    raw = os.environ.get("LLM_BOT_MAX_CONCURRENT_MODEL_CALLS", str(DEFAULT_MAX_CONCURRENT_MODEL_CALLS)).strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_MAX_CONCURRENT_MODEL_CALLS
+
+
+def configure_model_call_semaphore(limit: int | None = None) -> threading.BoundedSemaphore:
+    global _MODEL_CALL_SEMAPHORE, _MODEL_CALL_SEMAPHORE_LIMIT
+    configured_limit = max(1, int(limit if limit is not None else max_concurrent_model_calls()))
+    with _MODEL_CALL_SEMAPHORE_LOCK:
+        if _MODEL_CALL_SEMAPHORE is None or _MODEL_CALL_SEMAPHORE_LIMIT != configured_limit:
+            _MODEL_CALL_SEMAPHORE = threading.BoundedSemaphore(configured_limit)
+            _MODEL_CALL_SEMAPHORE_LIMIT = configured_limit
+    return _MODEL_CALL_SEMAPHORE
+
+
+def model_call_semaphore() -> threading.BoundedSemaphore:
+    with _MODEL_CALL_SEMAPHORE_LOCK:
+        if _MODEL_CALL_SEMAPHORE is not None:
+            return _MODEL_CALL_SEMAPHORE
+    return configure_model_call_semaphore()
 
 
 def llm_input_usd_per_million_tokens() -> float:
@@ -271,48 +302,62 @@ def bot_username() -> str:
     return os.environ.get("KRIEGSPIEL_BOT_USERNAME", "").strip().lower()
 
 
-def load_state() -> dict[str, Any]:
+def _load_state_unlocked() -> dict[str, Any]:
     return json.loads(STATE_PATH.read_text()) if STATE_PATH.exists() else {}
 
 
-def save_state(state: dict[str, Any]) -> None:
+def _save_state_unlocked(state: dict[str, Any]) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, indent=2))
 
 
+def load_state() -> dict[str, Any]:
+    with _STATE_LOCK:
+        return _load_state_unlocked()
+
+
+def save_state(state: dict[str, Any]) -> None:
+    with _STATE_LOCK:
+        _save_state_unlocked(state)
+
+
 def save_token(token: str) -> None:
-    state = load_state()
-    state["token"] = token
-    save_state(state)
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        state["token"] = token
+        _save_state_unlocked(state)
 
 
 def get_conversation_state(game_id: str) -> dict[str, Any]:
-    state = load_state()
-    conversations = state.get("conversations")
-    if not isinstance(conversations, dict):
-        return {}
-    conversation = conversations.get(game_id)
-    return conversation if isinstance(conversation, dict) else {}
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        conversations = state.get("conversations")
+        if not isinstance(conversations, dict):
+            return {}
+        conversation = conversations.get(game_id)
+        return conversation if isinstance(conversation, dict) else {}
 
 
 def save_conversation_state(game_id: str, conversation: dict[str, Any]) -> None:
-    state = load_state()
-    conversations = state.get("conversations")
-    if not isinstance(conversations, dict):
-        conversations = {}
-    conversations[game_id] = conversation
-    state["conversations"] = conversations
-    save_state(state)
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        conversations = state.get("conversations")
+        if not isinstance(conversations, dict):
+            conversations = {}
+        conversations[game_id] = conversation
+        state["conversations"] = conversations
+        _save_state_unlocked(state)
 
 
 def clear_conversation_state(game_id: str) -> None:
-    state = load_state()
-    conversations = state.get("conversations")
-    if not isinstance(conversations, dict) or game_id not in conversations:
-        return
-    conversations.pop(game_id, None)
-    state["conversations"] = conversations
-    save_state(state)
+    with _STATE_LOCK:
+        state = _load_state_unlocked()
+        conversations = state.get("conversations")
+        if not isinstance(conversations, dict) or game_id not in conversations:
+            return
+        conversations.pop(game_id, None)
+        state["conversations"] = conversations
+        _save_state_unlocked(state)
 
 
 def maybe_restore_token() -> None:
@@ -440,7 +485,8 @@ def lobby_create_cooldown_seconds() -> int:
 
 def can_create_lobby_game(now: float | None = None) -> bool:
     current = time.time() if now is None else now
-    last_created = load_state().get("last_lobby_game_created_at", 0)
+    with _STATE_LOCK:
+        last_created = load_state().get("last_lobby_game_created_at", 0)
     try:
         last_created = float(last_created)
     except (TypeError, ValueError):
@@ -449,9 +495,10 @@ def can_create_lobby_game(now: float | None = None) -> bool:
 
 
 def record_lobby_game_created(now: float | None = None) -> None:
-    state = load_state()
-    state["last_lobby_game_created_at"] = time.time() if now is None else now
-    save_state(state)
+    with _STATE_LOCK:
+        state = load_state()
+        state["last_lobby_game_created_at"] = time.time() if now is None else now
+        save_state(state)
 
 
 def max_active_games_before_create() -> int:
@@ -528,7 +575,8 @@ def has_own_waiting_game(open_games: list[dict[str, Any]]) -> bool:
 
 def can_attempt_bot_join(now: float | None = None) -> bool:
     current = time.time() if now is None else now
-    last_attempt = load_state().get("last_bot_game_join_attempt_at", 0)
+    with _STATE_LOCK:
+        last_attempt = load_state().get("last_bot_game_join_attempt_at", 0)
     try:
         last_attempt = float(last_attempt)
     except (TypeError, ValueError):
@@ -537,9 +585,10 @@ def can_attempt_bot_join(now: float | None = None) -> bool:
 
 
 def record_bot_join_attempt(now: float | None = None) -> None:
-    state = load_state()
-    state["last_bot_game_join_attempt_at"] = time.time() if now is None else now
-    save_state(state)
+    with _STATE_LOCK:
+        state = load_state()
+        state["last_bot_game_join_attempt_at"] = time.time() if now is None else now
+        save_state(state)
 
 
 def should_join_bot_lobby_game(games: list[dict[str, Any]]) -> bool:
@@ -998,19 +1047,20 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
         return bool(_LLM_PREFLIGHT_CACHE["ready"]), str(_LLM_PREFLIGHT_CACHE["reason"])
 
     try:
-        response = requests.post(
-            f"{llm_base_url()}/chat/completions",
-            headers=llm_headers(llm_api_key()),
-            json={
-                "model": llm_model(),
-                "messages": [
-                    {"role": "system", "content": "Reply with OK."},
-                    {"role": "user", "content": "Ping"},
-                ],
-                "max_tokens": 16,
-            },
-            timeout=llm_timeout_seconds(),
-        )
+        with model_call_semaphore():
+            response = requests.post(
+                f"{llm_base_url()}/chat/completions",
+                headers=llm_headers(llm_api_key()),
+                json={
+                    "model": llm_model(),
+                    "messages": [
+                        {"role": "system", "content": "Reply with OK."},
+                        {"role": "user", "content": "Ping"},
+                    ],
+                    "max_tokens": 16,
+                },
+                timeout=llm_timeout_seconds(),
+            )
         response.raise_for_status()
     except requests.RequestException as exc:
         reason = describe_http_error(exc)
@@ -1037,12 +1087,13 @@ def call_llm(
     }
     apply_response_format(payload)
 
-    response = requests.post(
-        f"{llm_base_url()}/chat/completions",
-        headers=llm_headers(api_key),
-        json=payload,
-        timeout=llm_timeout_seconds(),
-    )
+    with model_call_semaphore():
+        response = requests.post(
+            f"{llm_base_url()}/chat/completions",
+            headers=llm_headers(api_key),
+            json=payload,
+            timeout=llm_timeout_seconds(),
+        )
     response.raise_for_status()
     return response.json()
 
@@ -1390,19 +1441,152 @@ def maybe_play_game(game_id: str) -> bool:
     return acted
 
 
-def run_loop(poll_seconds: float) -> None:
-    while True:
+def http_status_code(exc: requests.RequestException) -> int | None:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    status_code = getattr(response, "status_code", None)
+    return int(status_code) if isinstance(status_code, int) else None
+
+
+class GameRunner:
+    def __init__(self, game_id: str, *, poll_seconds: float) -> None:
+        self.game_id = game_id
+        self.poll_seconds = max(0.5, float(poll_seconds))
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, name=f"llm-bot-game-{game_id}", daemon=True)
+        self._started = False
+
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        logger.info("%s: starting game runner", self.game_id)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def join(self, timeout: float | None = None) -> None:
+        if self._started:
+            self.thread.join(timeout=timeout)
+
+    def is_alive(self) -> bool:
+        return self._started and self.thread.is_alive()
+
+    def _wait(self) -> None:
+        self.stop_event.wait(self.poll_seconds)
+
+    def _run(self) -> None:
+        stop_reason = "stopped"
         try:
-            report_current_model_availability()
-            mine = get_json("/game/mine/active")
-            games = mine.get("games", [])
-            maybe_create_lobby_game(games)
-            maybe_join_bot_lobby_game(games)
-            for game in active_games(games):
-                maybe_play_game(game["game_id"])
-        except requests.RequestException as exc:
-            logger.warning("poll failed: %s", exc)
-        time.sleep(poll_seconds)
+            while not self.stop_event.is_set():
+                try:
+                    state = get_json(f"/game/{self.game_id}/state")
+                except requests.RequestException as exc:
+                    status_code = http_status_code(exc)
+                    if status_code in {400, 403, 404, 409}:
+                        stop_reason = f"state unavailable http_{status_code}"
+                        break
+                    logger.warning("%s: runner state poll failed: %s", self.game_id, exc)
+                    self._wait()
+                    continue
+
+                state_value = state.get("state")
+                if state_value != "active":
+                    stop_reason = f"state={state_value}"
+                    break
+
+                if state.get("turn") == state.get("your_color"):
+                    try:
+                        maybe_play_game(self.game_id)
+                    except requests.RequestException as exc:
+                        status_code = http_status_code(exc)
+                        if status_code in {400, 403, 404, 409}:
+                            stop_reason = f"play stopped http_{status_code}"
+                            break
+                        logger.warning("%s: runner play failed: %s", self.game_id, exc)
+
+                self._wait()
+        finally:
+            logger.info("%s: stopped game runner (%s)", self.game_id, stop_reason)
+
+
+class GameRunnerScheduler:
+    def __init__(
+        self,
+        *,
+        poll_seconds: float,
+        runner_factory: Any | None = None,
+    ) -> None:
+        self.poll_seconds = poll_seconds
+        self.runner_factory = runner_factory or (lambda game_id: GameRunner(game_id, poll_seconds=poll_seconds))
+        self.runners: dict[str, Any] = {}
+
+    @staticmethod
+    def game_id_for(game: dict[str, Any]) -> str:
+        return str(game.get("game_id") or "").strip()
+
+    def reconcile(self, games: list[dict[str, Any]]) -> None:
+        active_ids: set[str] = set()
+        for game in active_games(games):
+            game_id = self.game_id_for(game)
+            if not game_id:
+                continue
+            active_ids.add(game_id)
+            runner = self.runners.get(game_id)
+            if runner is not None and runner.is_alive():
+                continue
+            if runner is not None:
+                runner.join(timeout=0)
+            runner = self.runner_factory(game_id)
+            self.runners[game_id] = runner
+            runner.start()
+
+        for game_id, runner in list(self.runners.items()):
+            if game_id in active_ids:
+                continue
+            logger.info("%s: stopping game runner after active-game discovery removed it", game_id)
+            runner.stop()
+            runner.join(timeout=1.0)
+            self.runners.pop(game_id, None)
+
+        self.prune_finished()
+
+    def prune_finished(self) -> None:
+        for game_id, runner in list(self.runners.items()):
+            if runner.is_alive():
+                continue
+            runner.join(timeout=0)
+            self.runners.pop(game_id, None)
+
+    def stop_all(self) -> None:
+        for runner in list(self.runners.values()):
+            runner.stop()
+        for runner in list(self.runners.values()):
+            runner.join(timeout=2.0)
+        self.runners.clear()
+
+
+def run_loop(poll_seconds: float) -> None:
+    concurrency = max_concurrent_model_calls()
+    configure_model_call_semaphore(concurrency)
+    logger.info("model-call concurrency configured: max=%s", concurrency)
+    scheduler = GameRunnerScheduler(poll_seconds=poll_seconds)
+    try:
+        while True:
+            try:
+                report_current_model_availability()
+                mine = get_json("/game/mine/active")
+                games = mine.get("games", [])
+                maybe_create_lobby_game(games)
+                maybe_join_bot_lobby_game(games)
+                scheduler.reconcile(games)
+            except requests.RequestException as exc:
+                logger.warning("poll failed: %s", exc)
+            time.sleep(poll_seconds)
+    finally:
+        scheduler.stop_all()
 
 
 def main() -> None:

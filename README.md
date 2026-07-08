@@ -11,6 +11,8 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - polls assigned games from the live API
 - does not create waiting lobby games by default
 - can join another bot's waiting lobby game with 1% probability while still under its active-game cap
+- keeps one bot process per model instance while running one lightweight runner thread per active assigned game
+- gates external model calls through a shared configurable concurrency limit
 - builds a stateless compact prompt from ruleset summary, private FEN, public state, recent scorecard turns, legal actions, and retry feedback
 - asks the configured model for ranked candidate actions in compact JSON
 - validates model output against server-provided legal actions before playing
@@ -122,6 +124,7 @@ LLM_X_OPENROUTER_TITLE=Kriegspiel
 - `KRIEGSPIEL_MAX_ACTIVE_GAMES_BEFORE_CREATE=1`
 - `KRIEGSPIEL_LLM_BOT_TIER=T2|T3|T4`
 - `KRIEGSPIEL_AUTO_CREATE_COOLDOWN_SECONDS=3600|10800|21600`
+- `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS=5`
 - `KRIEGSPIEL_RESIGN_AFTER_MOVE_NUMBER=256` fallback used only when the server
   omits an LLM bot limit field
 
@@ -135,6 +138,14 @@ Bot-vs-bot play is enabled by default:
 - it uses the same active-game cap for intentional bot-vs-bot joins
 - it keeps the local cooldown even when no join candidate is found, matching backend bot-join limits and avoiding tight lobby scans
 
+Within one model instance, the main process still polls/discovers assigned
+active games. Each active game gets one runner thread that owns only that game
+until it completes or disappears. Backend polling and move submission are not
+globally throttled, but provider model calls are guarded by
+`LLM_BOT_MAX_CONCURRENT_MODEL_CALLS`, which defaults to `5`. This prevents large
+tournament batches from timing out behind one serial model loop while avoiding a
+process-per-game deployment shape.
+
 Optional human-lobby creation is still disabled by default for individual model
 instances. If an operator enables one selected model instance as the random
 tier representative, the built-in create cooldown defaults to T2 hourly, T3
@@ -146,6 +157,7 @@ Prompt defaults:
 - `LLM_MAX_PROMPT_TURNS=10` (values below 10 are clamped to 10)
 - `LLM_MODEL_BATCH_SIZE=10`
 - `LLM_MAX_BATCHES_PER_TURN=5`
+- `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS=5`
 - `LLM_MAX_OUTPUT_TOKENS=512`
 - `LLM_PREFLIGHT_SUCCESS_TTL_SECONDS=60`
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
@@ -153,7 +165,7 @@ Prompt defaults:
 ## Test
 
 ```bash
-python -m unittest discover -s tests
+python3 -m unittest discover -s tests
 ```
 
 ## systemd
