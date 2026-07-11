@@ -145,6 +145,11 @@ def llm_json_mode() -> str:
     return raw if raw in {"json_schema", "json_object", "none"} else DEFAULT_LLM_JSON_MODE
 
 
+def llm_use_tools() -> bool:
+    raw = os.environ.get("LLM_USE_TOOLS", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def max_concurrent_model_calls() -> int:
     raw = os.environ.get("LLM_BOT_MAX_CONCURRENT_MODEL_CALLS", str(DEFAULT_MAX_CONCURRENT_MODEL_CALLS)).strip()
     try:
@@ -984,6 +989,18 @@ def action_schema() -> dict[str, Any]:
     }
 
 
+def action_tool() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": ACTION_SCHEMA_NAME,
+            "description": "Return ranked Kriegspiel candidate actions for the current turn.",
+            "parameters": action_schema()["schema"],
+            "strict": True,
+        },
+    }
+
+
 def llm_headers(api_key: str) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -1097,6 +1114,10 @@ def call_llm(
         "max_tokens": llm_max_output_tokens(),
     }
     apply_response_format(payload)
+    if llm_use_tools():
+        payload.pop("response_format", None)
+        payload["tools"] = [action_tool()]
+        payload["tool_choice"] = {"type": "function", "function": {"name": ACTION_SCHEMA_NAME}}
 
     with model_call_semaphore():
         response = requests.post(
@@ -1107,6 +1128,50 @@ def call_llm(
         )
     response.raise_for_status()
     return response.json()
+
+
+def extract_tool_input(payload: dict[str, Any]) -> dict[str, Any] | None:
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return None
+
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, dict) or function.get("name") != ACTION_SCHEMA_NAME:
+                continue
+            arguments = function.get("arguments")
+            if isinstance(arguments, dict):
+                return arguments
+            if isinstance(arguments, str) and arguments.strip():
+                parsed = json.loads(arguments)
+                if isinstance(parsed, dict):
+                    return parsed
+                raise ValueError("Tool arguments must decode to an object")
+    return None
+
+
+def append_response_text_chunks(chunks: list[str], value: Any) -> None:
+    if isinstance(value, str) and value.strip():
+        chunks.append(value.strip())
+    elif isinstance(value, list):
+        for part in value:
+            if not isinstance(part, dict):
+                continue
+            for key in ("text", "summary"):
+                text = part.get(key)
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text.strip())
 
 
 def extract_response_text(payload: dict[str, Any]) -> str:
@@ -1123,15 +1188,11 @@ def extract_response_text(payload: dict[str, Any]) -> str:
             if isinstance(parsed, dict):
                 return json.dumps(parsed, separators=(",", ":"), ensure_ascii=True)
             content = message.get("content")
-            if isinstance(content, str) and content.strip():
-                chunks.append(content.strip())
-            elif isinstance(content, list):
-                for part in content:
-                    if not isinstance(part, dict):
-                        continue
-                    text = part.get("text")
-                    if isinstance(text, str) and text.strip():
-                        chunks.append(text.strip())
+            append_response_text_chunks(chunks, content)
+            if not chunks:
+                append_response_text_chunks(chunks, message.get("reasoning"))
+                append_response_text_chunks(chunks, message.get("reasoning_content"))
+                append_response_text_chunks(chunks, message.get("reasoning_details"))
         if chunks:
             return "\n".join(chunks)
 
@@ -1142,14 +1203,9 @@ def extract_response_text(payload: dict[str, Any]) -> str:
             if not isinstance(item, dict):
                 continue
             content = item.get("content")
-            if not isinstance(content, list):
-                continue
-            for part in content:
-                if not isinstance(part, dict):
-                    continue
-                text = part.get("text")
-                if isinstance(text, str) and text.strip():
-                    chunks.append(text.strip())
+            append_response_text_chunks(chunks, content)
+            if not chunks:
+                append_response_text_chunks(chunks, item.get("summary"))
         if chunks:
             return "\n".join(chunks)
 
@@ -1161,6 +1217,10 @@ def extract_response_text(payload: dict[str, Any]) -> str:
 
 
 def parse_model_decision(payload: dict[str, Any]) -> dict[str, Any]:
+    tool_input = extract_tool_input(payload)
+    if tool_input is not None:
+        return tool_input
+
     text = extract_response_text(payload)
     try:
         decision = json.loads(text)

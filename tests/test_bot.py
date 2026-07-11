@@ -82,6 +82,33 @@ class BotTests(unittest.TestCase):
             "{\"m\":[\"e2e4\"]}",
         )
 
+    def test_extract_response_text_reads_reasoning_aliases(self) -> None:
+        payload = {"choices": [{"message": {"content": "", "reasoning_content": "{\"m\":[\"e2e4\"]}"}}]}
+        self.assertEqual(
+            bot.extract_response_text(payload),
+            "{\"m\":[\"e2e4\"]}",
+        )
+
+    def test_parse_model_decision_reads_openai_tool_call(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": bot.ACTION_SCHEMA_NAME,
+                                    "arguments": "{\"m\":[\"e2e4\",\"ask_any\"]}",
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        self.assertEqual(bot.parse_model_decision(payload), {"m": ["e2e4", "ask_any"]})
+
     def test_extract_response_text_keeps_responses_fallback(self) -> None:
         payload = {"output": [{"content": [{"text": "{\"m\":[\"d2d4\"]}"}]}]}
         self.assertEqual(
@@ -763,6 +790,31 @@ class BotTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 321)
         self.assertEqual(payload["response_format"]["type"], "json_schema")
         self.assertEqual(payload["response_format"]["json_schema"]["name"], bot.ACTION_SCHEMA_NAME)
+
+    def test_call_llm_can_opt_into_openai_tool_calls(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": "chatcmpl_1"}
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "provider/model",
+                "LLM_USE_TOOLS": "true",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
+
+        payload = post.call_args.kwargs["json"]
+        self.assertNotIn("response_format", payload)
+        self.assertEqual(payload["tool_choice"], {"type": "function", "function": {"name": bot.ACTION_SCHEMA_NAME}})
+        self.assertEqual(payload["tools"][0]["type"], "function")
+        self.assertEqual(payload["tools"][0]["function"]["name"], bot.ACTION_SCHEMA_NAME)
+        self.assertEqual(payload["tools"][0]["function"]["parameters"], bot.action_schema()["schema"])
+        self.assertTrue(payload["tools"][0]["function"]["strict"])
 
     def test_model_call_semaphore_limits_concurrent_call_llm_execution(self) -> None:
         response = mock.Mock()

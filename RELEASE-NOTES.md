@@ -5,6 +5,15 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## OpenAI-Compatible Tool Calls
+
+- **Structured Actions**: add optional `LLM_USE_TOOLS=true` support for
+  OpenAI-compatible function calls using the existing compact action schema.
+- **Reasoning Responses**: parse Chat Completions `tool_calls` before text and
+  recognize reasoning text aliases returned by OpenRouter reasoning models.
+- **Kimi Template**: opt the Kimi K2 Thinking instance template into tool calls
+  so mandatory-reasoning responses still produce structured actions.
+
 ## T4 Model Instance Templates
 
 - **T4 Catalogue**: add OpenAI-compatible T4 instance templates for DeepSeek V4
