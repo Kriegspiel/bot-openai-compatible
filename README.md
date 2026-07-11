@@ -65,7 +65,7 @@ KRIEGSPIEL_BOT_DESCRIPTION=OpenRouter Gemini Flash-Lite Kriegspiel model bot.
 LLM_MODEL=google/gemini-2.5-flash-lite
 ```
 
-Checked-in T4 templates live under `instances/` with `.env.example` suffixes.
+Checked-in T3/T4 templates live under `instances/` with `.env.example` suffixes.
 Copy one to `.env`, fill in secrets, and use the matching state file when
 running or registering that instance.
 
