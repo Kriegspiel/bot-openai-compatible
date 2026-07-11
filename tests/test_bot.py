@@ -109,6 +109,47 @@ class BotTests(unittest.TestCase):
         }
         self.assertEqual(bot.parse_model_decision(payload), {"m": ["e2e4", "ask_any"]})
 
+    def test_parse_model_decision_extracts_json_from_tool_call_arguments(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": bot.ACTION_SCHEMA_NAME,
+                                    "arguments": "Here is the move list:\n{\"m\":[\"e2e4\"]}\nDone.",
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        self.assertEqual(bot.parse_model_decision(payload), {"m": ["e2e4"]})
+
+    def test_parse_model_decision_rejects_non_object_tool_arguments(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": bot.ACTION_SCHEMA_NAME,
+                                    "arguments": "[\"e2e4\"]",
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        with self.assertRaisesRegex(ValueError, "Tool arguments must decode to an object"):
+            bot.parse_model_decision(payload)
+
     def test_extract_response_text_keeps_responses_fallback(self) -> None:
         payload = {"output": [{"content": [{"text": "{\"m\":[\"d2d4\"]}"}]}]}
         self.assertEqual(
