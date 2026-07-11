@@ -5,6 +5,12 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Tool Argument JSON Recovery
+
+- **Tool Calls**: recover valid JSON objects from OpenAI-compatible tool-call
+  argument strings that include explanatory text before or after the object,
+  matching the existing recovery behavior for normal message text.
+
 ## LLM Turn Limit Counter Fix
 
 - **Bot-vs-bot Caps**: compare `llm_bot_turn_limit` against completed legal

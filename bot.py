@@ -1164,6 +1164,20 @@ def call_llm(
     return response.json()
 
 
+def parse_json_object_text(text: str, *, label: str = "Model response") -> dict[str, Any]:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            raise
+        parsed = json.loads(match.group(0))
+
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{label} must decode to an object")
+    return parsed
+
+
 def extract_tool_input(payload: dict[str, Any]) -> dict[str, Any] | None:
     choices = payload.get("choices")
     if not isinstance(choices, list):
@@ -1188,10 +1202,7 @@ def extract_tool_input(payload: dict[str, Any]) -> dict[str, Any] | None:
             if isinstance(arguments, dict):
                 return arguments
             if isinstance(arguments, str) and arguments.strip():
-                parsed = json.loads(arguments)
-                if isinstance(parsed, dict):
-                    return parsed
-                raise ValueError("Tool arguments must decode to an object")
+                return parse_json_object_text(arguments, label="Tool arguments")
     return None
 
 
@@ -1256,17 +1267,7 @@ def parse_model_decision(payload: dict[str, Any]) -> dict[str, Any]:
         return tool_input
 
     text = extract_response_text(payload)
-    try:
-        decision = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
-            raise
-        decision = json.loads(match.group(0))
-
-    if not isinstance(decision, dict):
-        raise ValueError("Model response must decode to an object")
-    return decision
+    return parse_json_object_text(text)
 
 
 def normalize_decision(decision: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] | None:
