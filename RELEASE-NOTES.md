@@ -5,6 +5,13 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## T4 Model Instance Templates
+
+- **T4 Catalogue**: add OpenAI-compatible T4 instance templates for DeepSeek V4
+  Pro, Gemini 3.1 Pro Preview, GLM 5.2, Kimi K2.7 Code, and Hermes 4 405B.
+- **Bot-vs-bot Caps**: honor the backend's current `llm_bot_turn_limit` field
+  before falling back to the legacy `llm_bot_ply_limit` field.
+
 ## Current Runtime Baseline
 
 - **Bot Identity**: shared OpenAI-compatible model-bot scaffold; the base
