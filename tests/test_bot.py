@@ -129,6 +129,30 @@ class BotTests(unittest.TestCase):
         }
         self.assertEqual(bot.parse_model_decision(payload), {"m": ["e2e4"]})
 
+    def test_parse_model_decision_ignores_trailing_text_after_object(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"m\":[\"e2e4\"]}\n\nI considered {a few} other moves."
+                    }
+                }
+            ]
+        }
+        self.assertEqual(bot.parse_model_decision(payload), {"m": ["e2e4"]})
+
+    def test_parse_model_decision_skips_invalid_braces_before_object(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Thinking in {loose notes first.\nFinal: {\"m\":[\"ask_any\"]}"
+                    }
+                }
+            ]
+        }
+        self.assertEqual(bot.parse_model_decision(payload), {"m": ["ask_any"]})
+
     def test_parse_model_decision_rejects_non_object_tool_arguments(self) -> None:
         payload = {
             "choices": [
