@@ -1165,13 +1165,24 @@ def call_llm(
 
 
 def parse_json_object_text(text: str, *, label: str = "Model response") -> dict[str, Any]:
+    decoder = json.JSONDecoder()
+    stripped = text.strip()
     try:
-        parsed = json.loads(text)
+        parsed, _ = decoder.raw_decode(stripped)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
+        first_error: json.JSONDecodeError | None = None
+        for match in re.finditer(r"\{", stripped):
+            try:
+                parsed, _ = decoder.raw_decode(stripped[match.start() :])
+            except json.JSONDecodeError as exc:
+                if first_error is None:
+                    first_error = exc
+                continue
+            break
+        else:
+            if first_error is not None:
+                raise first_error
             raise
-        parsed = json.loads(match.group(0))
 
     if not isinstance(parsed, dict):
         raise ValueError(f"{label} must decode to an object")
