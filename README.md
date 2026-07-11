@@ -101,6 +101,9 @@ JSON mode:
 - `LLM_JSON_MODE=json_schema` by default
 - use `LLM_JSON_MODE=json_object` if a provider supports JSON object mode but not strict schemas
 - use `LLM_JSON_MODE=none` if a provider rejects `response_format`; the bot still parses and validates output
+- `LLM_USE_TOOLS=true` forces an OpenAI-compatible function call with the same
+  compact action schema instead of `response_format`; use it for reasoning
+  models that spend their whole completion budget before emitting message text
 
 Pricing is logged from env so experiments can compare providers without code changes:
 
@@ -170,6 +173,7 @@ Prompt defaults:
 - `LLM_MODEL_BATCH_SIZE=10`
 - `LLM_MAX_BATCHES_PER_TURN=5`
 - `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS=5`
+- `LLM_USE_TOOLS=false`
 - `LLM_MAX_OUTPUT_TOKENS=512`
 - `LLM_PREFLIGHT_SUCCESS_TTL_SECONDS=60`
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
