@@ -16,8 +16,9 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - builds a stateless compact prompt from ruleset summary, private FEN, public state, recent scorecard turns, legal actions, and retry feedback
 - asks the configured model for ranked candidate actions in compact JSON
 - validates model output against server-provided legal actions before playing
-- honors explicit server-reported turn caps before asking the model; current
-  bot-vs-bot LLM game caps are backend-enforced completed-turn limits
+- honors explicit server-reported caps before asking the model; current
+  bot-vs-bot LLM game caps are completed-turn limits and do not count illegal
+  attempts
 - checks model availability with a tiny cached Chat Completions preflight before joining new bot-vs-bot games
 - falls back safely if the model is missing, unavailable, or returns malformed output
 

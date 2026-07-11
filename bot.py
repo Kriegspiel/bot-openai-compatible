@@ -747,19 +747,35 @@ def resign_after_move_number() -> int:
         return DEFAULT_RESIGN_AFTER_MOVE_NUMBER
 
 
-def move_limit_for_state(state: dict[str, Any]) -> int:
-    for key in ("llm_bot_turn_limit", "llm_bot_ply_limit"):
-        if key not in state:
-            continue
-        raw = state.get(key)
-        if raw is None:
-            return 0
-        try:
-            return max(0, int(raw))
-        except (TypeError, ValueError):
-            return resign_after_move_number()
+def _positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
-    return resign_after_move_number()
+
+def resignation_limit_for_state(state: dict[str, Any]) -> tuple[str, int] | None:
+    turn_limit = _positive_int(state.get("llm_bot_turn_limit")) if "llm_bot_turn_limit" in state else None
+    if turn_limit is not None:
+        return ("turn", turn_limit)
+
+    ply_limit = _positive_int(state.get("llm_bot_ply_limit")) if "llm_bot_ply_limit" in state else None
+    if ply_limit is not None:
+        return ("ply", ply_limit)
+
+    if "llm_bot_turn_limit" in state or "llm_bot_ply_limit" in state:
+        return None
+
+    fallback = resign_after_move_number()
+    return ("move", fallback) if fallback > 0 else None
+
+
+def move_limit_for_state(state: dict[str, Any]) -> int:
+    limit = resignation_limit_for_state(state)
+    return limit[1] if limit is not None else 0
 
 
 def completed_ply_count_for_state(state: dict[str, Any]) -> int:
@@ -770,11 +786,29 @@ def completed_ply_count_for_state(state: dict[str, Any]) -> int:
         return 0
 
 
+def completed_turn_count_for_state(state: dict[str, Any]) -> int:
+    raw = state.get("move_number")
+    try:
+        legal_ply_count = max(0, int(raw or 1) - 1)
+    except (TypeError, ValueError):
+        legal_ply_count = completed_ply_count_for_state(state)
+    return legal_ply_count // 2
+
+
+def resignation_limit_status_for_state(state: dict[str, Any]) -> dict[str, Any] | None:
+    limit = resignation_limit_for_state(state)
+    if limit is None:
+        return None
+
+    kind, threshold = limit
+    count = completed_turn_count_for_state(state) if kind == "turn" else completed_ply_count_for_state(state)
+    if count < threshold:
+        return None
+    return {"kind": kind, "count": count, "limit": threshold}
+
+
 def should_resign_for_move_limit(state: dict[str, Any]) -> bool:
-    limit = move_limit_for_state(state)
-    if limit <= 0:
-        return False
-    return completed_ply_count_for_state(state) >= limit
+    return resignation_limit_status_for_state(state) is not None
 
 
 def extract_recent_referee_items(scoresheet: dict[str, Any], *, limit: int = 8) -> list[str]:
@@ -1317,14 +1351,17 @@ def maybe_play_game(game_id: str) -> bool:
         state = get_json(f"/game/{game_id}/state")
         if state.get("state") != "active" or state.get("turn") != state.get("your_color"):
             return acted
-        if should_resign_for_move_limit(state):
+        limit_status = resignation_limit_status_for_state(state)
+        if limit_status is not None:
             result = post_json(f"/game/{game_id}/resign")
             clear_conversation_state(game_id)
             logger.info(
-                "%s: resigned at move %s after reaching move limit %s -> %s",
+                "%s: resigned after reaching %s limit %s at %s count %s -> %s",
                 game_id,
-                completed_ply_count_for_state(state),
-                move_limit_for_state(state),
+                limit_status["kind"],
+                limit_status["limit"],
+                limit_status["kind"],
+                limit_status["count"],
                 result.get("result"),
             )
             return True

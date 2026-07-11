@@ -5,6 +5,13 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## LLM Turn Limit Counter Fix
+
+- **Bot-vs-bot Caps**: compare `llm_bot_turn_limit` against completed legal
+  turns derived from `move_number`, not raw transcript attempts in `ply_count`.
+- **Runtime Logs**: label automatic cap resignations as turn, ply, or legacy
+  move limits so the log message matches the counter that triggered it.
+
 ## T4 Model Instance Templates
 
 - **T4 Catalogue**: add OpenAI-compatible T4 instance templates for DeepSeek V4
