@@ -140,6 +140,11 @@ def llm_max_output_tokens() -> int:
         return DEFAULT_LLM_MAX_OUTPUT_TOKENS
 
 
+def llm_max_tokens_parameter() -> str:
+    raw = os.environ.get("LLM_MAX_TOKENS_PARAMETER", "max_tokens").strip()
+    return raw if raw in {"max_tokens", "max_completion_tokens"} else "max_tokens"
+
+
 def llm_json_mode() -> str:
     raw = os.environ.get("LLM_JSON_MODE", DEFAULT_LLM_JSON_MODE).strip().lower()
     return raw if raw in {"json_schema", "json_object", "none"} else DEFAULT_LLM_JSON_MODE
@@ -1145,7 +1150,7 @@ def call_llm(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "max_tokens": llm_max_output_tokens(),
+        llm_max_tokens_parameter(): llm_max_output_tokens(),
     }
     apply_response_format(payload)
     if llm_use_tools():

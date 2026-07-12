@@ -864,6 +864,29 @@ class BotTests(unittest.TestCase):
         self.assertEqual(payload["response_format"]["type"], "json_schema")
         self.assertEqual(payload["response_format"]["json_schema"]["name"], bot.ACTION_SCHEMA_NAME)
 
+    def test_call_llm_can_use_max_completion_tokens_for_direct_openai(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": "chatcmpl_1"}
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "gpt-5.6-luna",
+                "LLM_API_BASE": "https://api.openai.com/v1",
+                "LLM_MAX_OUTPUT_TOKENS": "2048",
+                "LLM_MAX_TOKENS_PARAMETER": "max_completion_tokens",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
+
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["max_completion_tokens"], 2048)
+        self.assertNotIn("max_tokens", payload)
+
     def test_call_llm_can_opt_into_openai_tool_calls(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None

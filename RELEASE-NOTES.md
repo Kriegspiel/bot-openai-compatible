@@ -5,6 +5,16 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Direct Provider Catalog
+
+- **Direct OpenAI GPT Models**: add `LLM_MAX_TOKENS_PARAMETER` so direct
+  OpenAI GPT-5.6/GPT-5.5-class Chat Completions instances can use
+  `max_completion_tokens` while existing OpenAI-compatible provider instances
+  continue to use `max_tokens`.
+- **Instance Templates**: add GPT-5.6 Sol/Terra/Luna, Grok 4.5, Gemini 3.5
+  Flash, Qwen 3.7 Plus, DeepSeek V3.2, MiniMax M3, and Mistral Medium 3.5
+  templates with their catalogue tiers.
+
 ## Qwen Plus T2 Template
 
 - **Instance Template**: move the Qwen Plus example environment from T3 to T2
