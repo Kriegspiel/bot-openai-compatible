@@ -88,10 +88,21 @@ LLM_MODEL=<openrouter-model-slug>
 LLM_API_KEY=<openrouter-api-key>
 ```
 
+Direct OpenAI default:
+
+```env
+LLM_PROVIDER=openai
+LLM_API_BASE=https://api.openai.com/v1
+LLM_MODEL=<openai-model-id>
+LLM_API_KEY=<openai-api-key>
+LLM_MAX_TOKENS_PARAMETER=max_completion_tokens
+```
+
 Direct provider examples:
 
 | Provider | `LLM_API_BASE` | Example model |
 |---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-5.6-luna` |
 | Groq | `https://api.groq.com/openai/v1` | `llama-3.1-8b-instant` |
 | Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash-lite` |
 | DeepSeek | `https://api.deepseek.com` | `deepseek-v4-flash` |
@@ -176,6 +187,8 @@ Prompt defaults:
 - `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS=5`
 - `LLM_USE_TOOLS=false`
 - `LLM_MAX_OUTPUT_TOKENS=512`
+- `LLM_MAX_TOKENS_PARAMETER=max_tokens` (`max_completion_tokens` for direct
+  OpenAI GPT-5.6/GPT-5.5-class chat completions)
 - `LLM_PREFLIGHT_SUCCESS_TTL_SECONDS=60`
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
 
