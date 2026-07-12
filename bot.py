@@ -52,6 +52,7 @@ DEFAULT_LLM_PREFLIGHT_FAILURE_TTL_SECONDS = 15.0
 DEFAULT_LLM_PROVIDER = "openrouter"
 DEFAULT_LLM_API_BASE = "https://openrouter.ai/api/v1"
 DEFAULT_LLM_JSON_MODE = "json_schema"
+DEFAULT_LLM_WIRE_API = "chat_completions"
 DEFAULT_MODEL_AVAILABILITY_PROVIDER = "openai"
 DEFAULT_MODEL_AVAILABILITY_REPORT_INTERVAL_SECONDS = 30.0
 USD_PER_MILLION_TOKENS = 1_000_000
@@ -126,6 +127,16 @@ def llm_model() -> str:
 
 def llm_base_url() -> str:
     return os.environ.get("LLM_API_BASE", DEFAULT_LLM_API_BASE).rstrip("/")
+
+
+def llm_wire_api() -> str:
+    raw = os.environ.get("LLM_WIRE_API", os.environ.get("LLM_API_MODE", DEFAULT_LLM_WIRE_API)).strip().lower()
+    normalized = raw.replace("-", "_")
+    if normalized in {"responses", "response"}:
+        return "responses"
+    if normalized in {"chat", "chat_completions", "chat_completions_api"}:
+        return "chat_completions"
+    return DEFAULT_LLM_WIRE_API
 
 
 def llm_timeout_seconds() -> float:
@@ -1044,6 +1055,17 @@ def action_tool() -> dict[str, Any]:
     }
 
 
+def responses_action_tool() -> dict[str, Any]:
+    schema = action_schema()
+    return {
+        "type": "function",
+        "name": schema["name"],
+        "description": "Return ranked Kriegspiel candidate actions for the current turn.",
+        "parameters": schema["schema"],
+        "strict": bool(schema.get("strict", True)),
+    }
+
+
 def llm_headers(api_key: str) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -1069,10 +1091,32 @@ def apply_response_format(payload: dict[str, Any]) -> None:
         payload["response_format"] = {"type": "json_object"}
 
 
+def apply_responses_text_format(payload: dict[str, Any]) -> None:
+    mode = llm_json_mode()
+    if mode == "json_schema":
+        schema = action_schema()
+        payload["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": schema["name"],
+                "schema": schema["schema"],
+                "strict": bool(schema.get("strict", True)),
+            }
+        }
+    elif mode == "json_object":
+        payload["text"] = {"format": {"type": "json_object"}}
+
+
 def apply_reasoning_effort(payload: dict[str, Any]) -> None:
     effort = llm_reasoning_effort()
     if effort:
         payload["reasoning_effort"] = effort
+
+
+def apply_responses_reasoning_effort(payload: dict[str, Any]) -> None:
+    effort = llm_reasoning_effort()
+    if effort:
+        payload["reasoning"] = {"effort": effort}
 
 
 def llm_enabled() -> bool:
@@ -1124,18 +1168,29 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
         return bool(_LLM_PREFLIGHT_CACHE["ready"]), str(_LLM_PREFLIGHT_CACHE["reason"])
 
     try:
-        payload = {
-            "model": llm_model(),
-            "messages": [
-                {"role": "system", "content": "Reply with OK."},
-                {"role": "user", "content": "Ping"},
-            ],
-            llm_max_tokens_parameter(): 16,
-        }
-        apply_reasoning_effort(payload)
+        if llm_wire_api() == "responses":
+            endpoint = "responses"
+            payload = {
+                "model": llm_model(),
+                "instructions": "Reply with OK.",
+                "input": "Ping",
+                "max_output_tokens": 16,
+            }
+            apply_responses_reasoning_effort(payload)
+        else:
+            endpoint = "chat/completions"
+            payload = {
+                "model": llm_model(),
+                "messages": [
+                    {"role": "system", "content": "Reply with OK."},
+                    {"role": "user", "content": "Ping"},
+                ],
+                llm_max_tokens_parameter(): 16,
+            }
+            apply_reasoning_effort(payload)
         with model_call_semaphore():
             response = requests.post(
-                f"{llm_base_url()}/chat/completions",
+                f"{llm_base_url()}/{endpoint}",
                 headers=llm_headers(llm_api_key()),
                 json=payload,
                 timeout=llm_timeout_seconds(),
@@ -1156,6 +1211,30 @@ def call_llm(
 ) -> dict[str, Any]:
     api_key = llm_api_key()
     model = llm_model()
+    if llm_wire_api() == "responses":
+        payload = {
+            "model": model,
+            "instructions": system_prompt,
+            "input": user_prompt,
+            "max_output_tokens": llm_max_output_tokens(),
+        }
+        apply_responses_text_format(payload)
+        apply_responses_reasoning_effort(payload)
+        if llm_use_tools():
+            payload.pop("text", None)
+            payload["tools"] = [responses_action_tool()]
+            payload["tool_choice"] = {"type": "function", "name": ACTION_SCHEMA_NAME}
+
+        with model_call_semaphore():
+            response = requests.post(
+                f"{llm_base_url()}/responses",
+                headers=llm_headers(api_key),
+                json=payload,
+                timeout=llm_timeout_seconds(),
+            )
+        response.raise_for_status()
+        return response.json()
+
     payload: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -1209,29 +1288,41 @@ def parse_json_object_text(text: str, *, label: str = "Model response") -> dict[
 
 def extract_tool_input(payload: dict[str, Any]) -> dict[str, Any] | None:
     choices = payload.get("choices")
-    if not isinstance(choices, list):
-        return None
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                continue
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function")
+                if not isinstance(function, dict) or function.get("name") != ACTION_SCHEMA_NAME:
+                    continue
+                arguments = function.get("arguments")
+                if isinstance(arguments, dict):
+                    return arguments
+                if isinstance(arguments, str) and arguments.strip():
+                    return parse_json_object_text(arguments, label="Tool arguments")
 
-    for choice in choices:
-        if not isinstance(choice, dict):
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return None
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "function_call":
             continue
-        message = choice.get("message")
-        if not isinstance(message, dict):
+        if item.get("name") != ACTION_SCHEMA_NAME:
             continue
-        tool_calls = message.get("tool_calls")
-        if not isinstance(tool_calls, list):
-            continue
-        for tool_call in tool_calls:
-            if not isinstance(tool_call, dict):
-                continue
-            function = tool_call.get("function")
-            if not isinstance(function, dict) or function.get("name") != ACTION_SCHEMA_NAME:
-                continue
-            arguments = function.get("arguments")
-            if isinstance(arguments, dict):
-                return arguments
-            if isinstance(arguments, str) and arguments.strip():
-                return parse_json_object_text(arguments, label="Tool arguments")
+        arguments = item.get("arguments")
+        if isinstance(arguments, dict):
+            return arguments
+        if isinstance(arguments, str) and arguments.strip():
+            return parse_json_object_text(arguments, label="Tool arguments")
     return None
 
 

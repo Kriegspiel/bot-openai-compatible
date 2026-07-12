@@ -5,6 +5,16 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## OpenAI Responses API Wire Mode
+
+- **Responses API**: add opt-in `LLM_WIRE_API=responses` support for direct
+  OpenAI models that are not served by Chat Completions.
+- **Structured Actions**: map the existing compact action schema to Responses
+  `text.format` structured outputs and parse Responses `function_call` output
+  items when tool mode is enabled.
+- **Provider Preflight**: use `/responses` for model availability preflight when
+  the instance selects Responses wire mode.
+
 ## Qwen 3.7 Schema Mode
 
 - **Instance Template**: set Qwen 3.7 Plus to `LLM_USE_TOOLS=false` so it uses

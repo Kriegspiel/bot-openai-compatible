@@ -19,7 +19,7 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - honors explicit server-reported caps before asking the model; current
   bot-vs-bot LLM game caps are completed-turn limits and do not count illegal
   attempts
-- checks model availability with a tiny cached Chat Completions preflight before joining new bot-vs-bot games
+- checks model availability with a tiny cached provider preflight before joining new bot-vs-bot games
 - falls back safely if the model is missing, unavailable, or returns malformed output
 
 ## Setup
@@ -99,6 +99,18 @@ LLM_MAX_TOKENS_PARAMETER=max_completion_tokens
 LLM_REASONING_EFFORT=none
 ```
 
+Direct OpenAI models that are not served through Chat Completions can opt into
+the Responses API instead:
+
+```env
+LLM_PROVIDER=openai
+LLM_API_BASE=https://api.openai.com/v1
+LLM_MODEL=<openai-model-id>
+LLM_API_KEY=<openai-api-key>
+LLM_WIRE_API=responses
+LLM_REASONING_EFFORT=none
+```
+
 Direct provider examples:
 
 | Provider | `LLM_API_BASE` | Example model |
@@ -117,6 +129,9 @@ JSON mode:
 - `LLM_USE_TOOLS=true` forces an OpenAI-compatible function call with the same
   compact action schema instead of `response_format`; use it for reasoning
   models that spend their whole completion budget before emitting message text
+- `LLM_WIRE_API=responses` uses the OpenAI Responses API with
+  `text.format` structured outputs; the default remains
+  `LLM_WIRE_API=chat_completions`
 
 Pricing is logged from env so experiments can compare providers without code changes:
 
@@ -143,7 +158,7 @@ LLM_X_OPENROUTER_TITLE=Kriegspiel
 - `KRIEGSPIEL_SUPPORTED_RULE_VARIANTS=berkeley,berkeley_any,cincinnati,wild16,rand,english,crazykrieg`
 - `KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT=100`
 - `KRIEGSPIEL_MAX_ACTIVE_GAMES_BEFORE_CREATE=1`
-- `KRIEGSPIEL_LLM_BOT_TIER=T2|T3|T4`
+- `KRIEGSPIEL_LLM_BOT_TIER=T2|T3|T4|T5`
 - `KRIEGSPIEL_AUTO_CREATE_COOLDOWN_SECONDS=3600|10800|21600`
 - `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS=5`
 - `KRIEGSPIEL_RESIGN_AFTER_MOVE_NUMBER=256` fallback used only when the server
@@ -187,6 +202,7 @@ Prompt defaults:
 - `LLM_MAX_BATCHES_PER_TURN=5`
 - `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS=5`
 - `LLM_USE_TOOLS=false`
+- `LLM_WIRE_API=chat_completions`
 - `LLM_MAX_OUTPUT_TOKENS=512`
 - `LLM_MAX_TOKENS_PARAMETER=max_tokens` (`max_completion_tokens` for direct
   OpenAI GPT-5.6/GPT-5.5-class chat completions)

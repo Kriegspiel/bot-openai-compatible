@@ -109,6 +109,18 @@ class BotTests(unittest.TestCase):
         }
         self.assertEqual(bot.parse_model_decision(payload), {"m": ["e2e4", "ask_any"]})
 
+    def test_parse_model_decision_reads_responses_function_call(self) -> None:
+        payload = {
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": bot.ACTION_SCHEMA_NAME,
+                    "arguments": "{\"m\":[\"d2d4\",\"ask_any\"]}",
+                }
+            ]
+        }
+        self.assertEqual(bot.parse_model_decision(payload), {"m": ["d2d4", "ask_any"]})
+
     def test_parse_model_decision_extracts_json_from_tool_call_arguments(self) -> None:
         payload = {
             "choices": [
@@ -853,6 +865,32 @@ class BotTests(unittest.TestCase):
         self.assertEqual(payload["reasoning_effort"], "none")
         self.assertNotIn("max_tokens", payload)
 
+    def test_llm_preflight_can_use_responses_api(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "gpt-5.5-pro",
+                "LLM_API_BASE": "https://api.openai.com/v1",
+                "LLM_WIRE_API": "responses",
+                "LLM_REASONING_EFFORT": "none",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+
+        self.assertEqual(post.call_args.args[0], "https://api.openai.com/v1/responses")
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "gpt-5.5-pro")
+        self.assertEqual(payload["instructions"], "Reply with OK.")
+        self.assertEqual(payload["input"], "Ping")
+        self.assertEqual(payload["max_output_tokens"], 16)
+        self.assertEqual(payload["reasoning"], {"effort": "none"})
+        self.assertNotIn("messages", payload)
+
     def test_call_llm_posts_chat_completion_with_json_schema(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None
@@ -884,6 +922,40 @@ class BotTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 321)
         self.assertEqual(payload["response_format"]["type"], "json_schema")
         self.assertEqual(payload["response_format"]["json_schema"]["name"], bot.ACTION_SCHEMA_NAME)
+
+    def test_call_llm_can_use_responses_api_with_json_schema(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": "resp_1"}
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "gpt-5.5-pro",
+                "LLM_API_BASE": "https://api.openai.com/v1",
+                "LLM_WIRE_API": "responses",
+                "LLM_MAX_OUTPUT_TOKENS": "2048",
+                "LLM_REASONING_EFFORT": "none",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "resp_1"})
+
+        self.assertEqual(post.call_args.args[0], "https://api.openai.com/v1/responses")
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "gpt-5.5-pro")
+        self.assertEqual(payload["instructions"], "system")
+        self.assertEqual(payload["input"], "user")
+        self.assertEqual(payload["max_output_tokens"], 2048)
+        self.assertEqual(payload["reasoning"], {"effort": "none"})
+        self.assertEqual(payload["text"]["format"]["type"], "json_schema")
+        self.assertEqual(payload["text"]["format"]["name"], bot.ACTION_SCHEMA_NAME)
+        self.assertEqual(payload["text"]["format"]["schema"], bot.action_schema()["schema"])
+        self.assertTrue(payload["text"]["format"]["strict"])
+        self.assertNotIn("messages", payload)
+        self.assertNotIn("response_format", payload)
 
     def test_call_llm_can_use_max_completion_tokens_for_direct_openai(self) -> None:
         response = mock.Mock()
@@ -936,6 +1008,34 @@ class BotTests(unittest.TestCase):
         self.assertEqual(payload["tools"][0]["function"]["name"], bot.ACTION_SCHEMA_NAME)
         self.assertEqual(payload["tools"][0]["function"]["parameters"], bot.action_schema()["schema"])
         self.assertTrue(payload["tools"][0]["function"]["strict"])
+
+    def test_call_llm_can_use_responses_api_with_function_tools(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": "resp_1"}
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "gpt-5.5-pro",
+                "LLM_WIRE_API": "responses",
+                "LLM_USE_TOOLS": "true",
+                "LLM_REASONING_EFFORT": "",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "resp_1"})
+
+        payload = post.call_args.kwargs["json"]
+        self.assertNotIn("text", payload)
+        self.assertNotIn("reasoning", payload)
+        self.assertEqual(payload["tool_choice"], {"type": "function", "name": bot.ACTION_SCHEMA_NAME})
+        self.assertEqual(payload["tools"][0]["type"], "function")
+        self.assertEqual(payload["tools"][0]["name"], bot.ACTION_SCHEMA_NAME)
+        self.assertEqual(payload["tools"][0]["parameters"], bot.action_schema()["schema"])
+        self.assertTrue(payload["tools"][0]["strict"])
 
     def test_call_llm_can_set_reasoning_effort_for_tool_calls(self) -> None:
         response = mock.Mock()
