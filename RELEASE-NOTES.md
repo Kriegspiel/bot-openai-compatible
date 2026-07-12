@@ -5,6 +5,11 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Qwen Plus T2 Template
+
+- **Instance Template**: move the Qwen Plus example environment from T3 to T2
+  so newly rendered OpenAI-compatible instances match the production catalogue.
+
 ## Tool Argument JSON Recovery
 
 - **Tool Calls**: recover valid JSON objects from OpenAI-compatible tool-call
