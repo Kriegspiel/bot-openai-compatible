@@ -100,7 +100,8 @@ LLM_REASONING_EFFORT=none
 ```
 
 Direct OpenAI models that are not served through Chat Completions can opt into
-the Responses API instead:
+the Responses API instead. GPT-5.5 Pro currently uses `medium` because the
+direct model rejected reasoning effort `none` during production validation:
 
 ```env
 LLM_PROVIDER=openai
@@ -108,8 +109,18 @@ LLM_API_BASE=https://api.openai.com/v1
 LLM_MODEL=<openai-model-id>
 LLM_API_KEY=<openai-api-key>
 LLM_WIRE_API=responses
-LLM_REASONING_EFFORT=none
+LLM_REASONING_EFFORT=medium
 ```
+
+Current production direct OpenAI reasoning defaults:
+
+| Instance | Public model | Wire API | Default reasoning level |
+|---|---|---|---|
+| `gpt55` | GPT-5.5 | Chat Completions | `none` |
+| `gpt55-pro` | GPT-5.5 Pro | Responses API | `medium` |
+| `gpt56-luna` | GPT-5.6 Luna | Chat Completions | `none` |
+| `gpt56-terra` | GPT-5.6 Terra | Chat Completions | `none` |
+| `gpt56-sol` | GPT-5.6 Sol | Chat Completions | `none` |
 
 Direct provider examples:
 
@@ -207,7 +218,8 @@ Prompt defaults:
 - `LLM_MAX_TOKENS_PARAMETER=max_tokens` (`max_completion_tokens` for direct
   OpenAI GPT-5.6/GPT-5.5-class chat completions)
 - `LLM_REASONING_EFFORT=` (`none` for direct OpenAI GPT-5.6/GPT-5.5-class
-  chat completions that opt into tool calls)
+  chat completions that opt into tool calls; `medium` for the direct OpenAI
+  GPT-5.5 Pro Responses instance)
 - `LLM_PREFLIGHT_SUCCESS_TTL_SECONDS=60`
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
 
