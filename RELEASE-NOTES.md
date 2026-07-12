@@ -5,6 +5,14 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Direct OpenAI Tool Compatibility
+
+- **Reasoning Effort**: add optional `LLM_REASONING_EFFORT`, applied to
+  Chat Completions calls and provider preflight, so direct OpenAI GPT
+  tool-call instances can set `reasoning_effort=none`.
+- **Instance Templates**: set `LLM_REASONING_EFFORT=none` for direct OpenAI
+  GPT-5.6/GPT-5.5-class templates that use OpenAI function tools.
+
 ## Direct Provider Catalog
 
 - **Direct OpenAI GPT Models**: add `LLM_MAX_TOKENS_PARAMETER` so direct
