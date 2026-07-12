@@ -5,6 +5,12 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Qwen 3.7 Schema Mode
+
+- **Instance Template**: set Qwen 3.7 Plus to `LLM_USE_TOOLS=false` so it uses
+  the JSON-schema text path instead of OpenRouter tool calls that return HTTP
+  400 provider errors.
+
 ## Direct OpenAI Tool Compatibility
 
 - **Reasoning Effort**: add optional `LLM_REASONING_EFFORT`, applied to
