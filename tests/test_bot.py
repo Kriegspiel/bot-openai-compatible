@@ -832,6 +832,25 @@ class BotTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["json"]["messages"][0]["role"], "system")
         self.assertGreaterEqual(post.call_args.kwargs["json"]["max_tokens"], 16)
 
+    def test_llm_preflight_can_use_max_completion_tokens_for_direct_openai(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "gpt-5.6-luna",
+                "LLM_MAX_TOKENS_PARAMETER": "max_completion_tokens",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["max_completion_tokens"], 16)
+        self.assertNotIn("max_tokens", payload)
+
     def test_call_llm_posts_chat_completion_with_json_schema(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None
