@@ -96,6 +96,7 @@ LLM_API_BASE=https://api.openai.com/v1
 LLM_MODEL=<openai-model-id>
 LLM_API_KEY=<openai-api-key>
 LLM_MAX_TOKENS_PARAMETER=max_completion_tokens
+LLM_REASONING_EFFORT=none
 ```
 
 Direct provider examples:
@@ -189,6 +190,8 @@ Prompt defaults:
 - `LLM_MAX_OUTPUT_TOKENS=512`
 - `LLM_MAX_TOKENS_PARAMETER=max_tokens` (`max_completion_tokens` for direct
   OpenAI GPT-5.6/GPT-5.5-class chat completions)
+- `LLM_REASONING_EFFORT=` (`none` for direct OpenAI GPT-5.6/GPT-5.5-class
+  chat completions that opt into tool calls)
 - `LLM_PREFLIGHT_SUCCESS_TTL_SECONDS=60`
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
 

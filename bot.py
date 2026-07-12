@@ -145,6 +145,10 @@ def llm_max_tokens_parameter() -> str:
     return raw if raw in {"max_tokens", "max_completion_tokens"} else "max_tokens"
 
 
+def llm_reasoning_effort() -> str:
+    return os.environ.get("LLM_REASONING_EFFORT", "").strip().lower()
+
+
 def llm_json_mode() -> str:
     raw = os.environ.get("LLM_JSON_MODE", DEFAULT_LLM_JSON_MODE).strip().lower()
     return raw if raw in {"json_schema", "json_object", "none"} else DEFAULT_LLM_JSON_MODE
@@ -1065,6 +1069,12 @@ def apply_response_format(payload: dict[str, Any]) -> None:
         payload["response_format"] = {"type": "json_object"}
 
 
+def apply_reasoning_effort(payload: dict[str, Any]) -> None:
+    effort = llm_reasoning_effort()
+    if effort:
+        payload["reasoning_effort"] = effort
+
+
 def llm_enabled() -> bool:
     return bool(llm_api_key() and llm_model())
 
@@ -1122,6 +1132,7 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
             ],
             llm_max_tokens_parameter(): 16,
         }
+        apply_reasoning_effort(payload)
         with model_call_semaphore():
             response = requests.post(
                 f"{llm_base_url()}/chat/completions",
@@ -1154,6 +1165,7 @@ def call_llm(
         llm_max_tokens_parameter(): llm_max_output_tokens(),
     }
     apply_response_format(payload)
+    apply_reasoning_effort(payload)
     if llm_use_tools():
         payload.pop("response_format", None)
         payload["tools"] = [action_tool()]

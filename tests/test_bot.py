@@ -841,6 +841,7 @@ class BotTests(unittest.TestCase):
                 "LLM_API_KEY": "test-key",
                 "LLM_MODEL": "gpt-5.6-luna",
                 "LLM_MAX_TOKENS_PARAMETER": "max_completion_tokens",
+                "LLM_REASONING_EFFORT": "none",
             },
             clear=False,
         ):
@@ -849,6 +850,7 @@ class BotTests(unittest.TestCase):
 
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["max_completion_tokens"], 16)
+        self.assertEqual(payload["reasoning_effort"], "none")
         self.assertNotIn("max_tokens", payload)
 
     def test_call_llm_posts_chat_completion_with_json_schema(self) -> None:
@@ -896,6 +898,7 @@ class BotTests(unittest.TestCase):
                 "LLM_API_BASE": "https://api.openai.com/v1",
                 "LLM_MAX_OUTPUT_TOKENS": "2048",
                 "LLM_MAX_TOKENS_PARAMETER": "max_completion_tokens",
+                "LLM_REASONING_EFFORT": "NONE",
             },
             clear=False,
         ):
@@ -904,6 +907,7 @@ class BotTests(unittest.TestCase):
 
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["max_completion_tokens"], 2048)
+        self.assertEqual(payload["reasoning_effort"], "none")
         self.assertNotIn("max_tokens", payload)
 
     def test_call_llm_can_opt_into_openai_tool_calls(self) -> None:
@@ -917,6 +921,7 @@ class BotTests(unittest.TestCase):
                 "LLM_API_KEY": "test-key",
                 "LLM_MODEL": "provider/model",
                 "LLM_USE_TOOLS": "true",
+                "LLM_REASONING_EFFORT": "",
             },
             clear=False,
         ):
@@ -924,12 +929,36 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
 
         payload = post.call_args.kwargs["json"]
+        self.assertNotIn("reasoning_effort", payload)
         self.assertNotIn("response_format", payload)
         self.assertEqual(payload["tool_choice"], {"type": "function", "function": {"name": bot.ACTION_SCHEMA_NAME}})
         self.assertEqual(payload["tools"][0]["type"], "function")
         self.assertEqual(payload["tools"][0]["function"]["name"], bot.ACTION_SCHEMA_NAME)
         self.assertEqual(payload["tools"][0]["function"]["parameters"], bot.action_schema()["schema"])
         self.assertTrue(payload["tools"][0]["function"]["strict"])
+
+    def test_call_llm_can_set_reasoning_effort_for_tool_calls(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"id": "chatcmpl_1"}
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "gpt-5.6-sol",
+                "LLM_USE_TOOLS": "true",
+                "LLM_REASONING_EFFORT": "none",
+            },
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+                self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
+
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["reasoning_effort"], "none")
+        self.assertNotIn("response_format", payload)
+        self.assertEqual(payload["tools"][0]["function"]["name"], bot.ACTION_SCHEMA_NAME)
 
     def test_model_call_semaphore_limits_concurrent_call_llm_execution(self) -> None:
         response = mock.Mock()
