@@ -1114,18 +1114,19 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
         return bool(_LLM_PREFLIGHT_CACHE["ready"]), str(_LLM_PREFLIGHT_CACHE["reason"])
 
     try:
+        payload = {
+            "model": llm_model(),
+            "messages": [
+                {"role": "system", "content": "Reply with OK."},
+                {"role": "user", "content": "Ping"},
+            ],
+            llm_max_tokens_parameter(): 16,
+        }
         with model_call_semaphore():
             response = requests.post(
                 f"{llm_base_url()}/chat/completions",
                 headers=llm_headers(llm_api_key()),
-                json={
-                    "model": llm_model(),
-                    "messages": [
-                        {"role": "system", "content": "Reply with OK."},
-                        {"role": "user", "content": "Ping"},
-                    ],
-                    "max_tokens": 16,
-                },
+                json=payload,
                 timeout=llm_timeout_seconds(),
             )
         response.raise_for_status()
