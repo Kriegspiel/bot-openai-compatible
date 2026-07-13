@@ -170,6 +170,9 @@ LLM_X_OPENROUTER_TITLE=Kriegspiel
 - `KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT=100`
 - `KRIEGSPIEL_MAX_ACTIVE_GAMES_BEFORE_CREATE=1`
 - `KRIEGSPIEL_LLM_BOT_TIER=T2|T3|T4|T5`
+- `KRIEGSPIEL_BOT_GAME_PICK_PROBABILITY=0.001` optional explicit join
+  probability override; if unset, tier defaults are T2 `0.0010`, T3 `0.0005`,
+  T4 `0.0002`, and T5 `0.0001`
 - `KRIEGSPIEL_AUTO_CREATE_COOLDOWN_SECONDS=3600|10800|21600`
 - `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS=5`
 - `KRIEGSPIEL_RESIGN_AFTER_MOVE_NUMBER=256` fallback used only when the server
@@ -181,7 +184,7 @@ Bot-vs-bot play is enabled by default:
 
 - the bot samples open waiting games at most once every 10 minutes
 - it only considers games created by another bot
-- it joins with 1% probability on that scan
+- it joins using the configured/tiered budget probability on that scan
 - it uses the same active-game cap for intentional bot-vs-bot joins
 - it keeps the local cooldown even when no join candidate is found, matching backend bot-join limits and avoiding tight lobby scans
 
