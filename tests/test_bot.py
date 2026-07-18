@@ -861,46 +861,82 @@ class BotTests(unittest.TestCase):
             self.assertTrue(bot.has_own_waiting_game([{"game_code": "ABC123", "created_by": "openrouterbot"}]))
             self.assertFalse(bot.has_own_waiting_game([{"game_code": "XYZ789", "created_by": "randobot"}]))
 
-    def test_llm_preflight_status_caches_success(self) -> None:
+    def test_openrouter_preflight_uses_free_key_status_and_caches_success(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None
-        with mock.patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"}, clear=False):
+        response.json.return_value = {"data": {"limit_remaining": 12.5}}
+        with mock.patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "get", return_value=response) as get:
+                with mock.patch.object(bot.requests, "post") as post:
+                    self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+                    self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+
+        get.assert_called_once()
+        self.assertTrue(get.call_args.args[0].endswith("/key"))
+        self.assertEqual(get.call_args.kwargs["headers"]["Authorization"], "Bearer test-key")
+        post.assert_not_called()
+
+    def test_openrouter_preflight_rejects_exhausted_key_limit(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": {"limit_remaining": 0}}
+        with mock.patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "get", return_value=response):
+                self.assertEqual(bot.llm_preflight_status(), (False, "openrouter_key_limit_exhausted"))
+
+    def test_non_openrouter_preflight_keeps_completion_probe(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        with mock.patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "custom", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
+            clear=False,
+        ):
             with mock.patch.object(bot.requests, "post", return_value=response) as post:
                 self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
-                self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
-        self.assertEqual(post.call_count, 1)
+
         self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
         self.assertEqual(post.call_args.kwargs["json"]["messages"][0]["role"], "system")
         self.assertGreaterEqual(post.call_args.kwargs["json"]["max_tokens"], 16)
 
-    def test_llm_preflight_can_use_max_completion_tokens_for_direct_openai(self) -> None:
+    def test_direct_openai_preflight_uses_free_model_metadata(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None
         with mock.patch.dict(
             "os.environ",
             {
                 "LLM_API_KEY": "test-key",
+                "LLM_PROVIDER": "openai",
+                "LLM_API_BASE": "https://api.openai.com/v1",
                 "LLM_MODEL": "gpt-5.6-luna",
                 "LLM_MAX_TOKENS_PARAMETER": "max_completion_tokens",
                 "LLM_REASONING_EFFORT": "none",
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
-                self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+            with mock.patch.object(bot.requests, "get", return_value=response) as get:
+                with mock.patch.object(bot.requests, "post") as post:
+                    self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
-        payload = post.call_args.kwargs["json"]
-        self.assertEqual(payload["max_completion_tokens"], 16)
-        self.assertEqual(payload["reasoning_effort"], "none")
-        self.assertNotIn("max_tokens", payload)
+        self.assertEqual(get.call_args.args[0], "https://api.openai.com/v1/models/gpt-5.6-luna")
+        post.assert_not_called()
 
-    def test_llm_preflight_can_use_responses_api(self) -> None:
+    def test_direct_openai_responses_instance_uses_free_model_metadata(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None
         with mock.patch.dict(
             "os.environ",
             {
                 "LLM_API_KEY": "test-key",
+                "LLM_PROVIDER": "openai",
                 "LLM_MODEL": "gpt-5.5-pro",
                 "LLM_API_BASE": "https://api.openai.com/v1",
                 "LLM_WIRE_API": "responses",
@@ -908,17 +944,12 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
-                self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+            with mock.patch.object(bot.requests, "get", return_value=response) as get:
+                with mock.patch.object(bot.requests, "post") as post:
+                    self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
-        self.assertEqual(post.call_args.args[0], "https://api.openai.com/v1/responses")
-        payload = post.call_args.kwargs["json"]
-        self.assertEqual(payload["model"], "gpt-5.5-pro")
-        self.assertEqual(payload["instructions"], "Reply with OK.")
-        self.assertEqual(payload["input"], "Ping")
-        self.assertEqual(payload["max_output_tokens"], 16)
-        self.assertEqual(payload["reasoning"], {"effort": "none"})
-        self.assertNotIn("messages", payload)
+        self.assertEqual(get.call_args.args[0], "https://api.openai.com/v1/models/gpt-5.5-pro")
+        post.assert_not_called()
 
     def test_call_llm_posts_chat_completion_with_json_schema(self) -> None:
         response = mock.Mock()

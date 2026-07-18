@@ -19,7 +19,7 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - honors explicit server-reported caps before asking the model; current
   bot-vs-bot LLM game caps are completed-turn limits and do not count illegal
   attempts
-- checks model availability with a tiny cached provider preflight before joining new bot-vs-bot games
+- checks provider availability with a cached preflight before joining new bot-vs-bot games; OpenRouter and direct OpenAI use non-generating metadata endpoints so idle checks are not billed
 - falls back safely if the model is missing, unavailable, or returns malformed output
 
 ## Setup
@@ -225,6 +225,14 @@ Prompt defaults:
   GPT-5.5 Pro Responses instance)
 - `LLM_PREFLIGHT_SUCCESS_TTL_SECONDS=60`
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
+- `OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS=300`
+- `OPENROUTER_PREFLIGHT_FAILURE_TTL_SECONDS=60`
+
+OpenRouter preflight calls `GET /api/v1/key` to validate the configured key and
+its key-level spending limit without creating a model generation. Direct
+OpenAI provider preflight calls `GET /v1/models/{model}`. The generic LLM
+preflight settings continue to control providers that require a tiny model
+completion for readiness checks.
 
 ## Test
 
