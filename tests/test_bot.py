@@ -892,6 +892,28 @@ class BotTests(unittest.TestCase):
             with mock.patch.object(bot.requests, "get", return_value=response):
                 self.assertEqual(bot.llm_preflight_status(), (False, "openrouter_key_limit_exhausted"))
 
+    def test_openrouter_preflight_requires_two_dollars_remaining(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": {"limit_remaining": 1.999999}}
+        with mock.patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "get", return_value=response):
+                self.assertEqual(bot.llm_preflight_status(), (False, "openrouter_key_limit_below_minimum"))
+
+        bot._LLM_PREFLIGHT_CACHE.update({"ready": None, "expires_at": 0.0, "reason": "unchecked"})
+        response.json.return_value = {"data": {"limit_remaining": 2}}
+        with mock.patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
+            clear=False,
+        ):
+            with mock.patch.object(bot.requests, "get", return_value=response):
+                self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+
     def test_non_openrouter_preflight_keeps_completion_probe(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None
@@ -922,9 +944,10 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "get", return_value=response) as get:
-                with mock.patch.object(bot.requests, "post") as post:
-                    self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+            with mock.patch.object(bot, "openai_monthly_budget_status", return_value=(True, "ok", None)):
+                with mock.patch.object(bot.requests, "get", return_value=response) as get:
+                    with mock.patch.object(bot.requests, "post") as post:
+                        self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
         self.assertEqual(get.call_args.args[0], "https://api.openai.com/v1/models/gpt-5.6-luna")
         post.assert_not_called()
@@ -944,11 +967,77 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "get", return_value=response) as get:
-                with mock.patch.object(bot.requests, "post") as post:
-                    self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
+            with mock.patch.object(bot, "openai_monthly_budget_status", return_value=(True, "ok", None)):
+                with mock.patch.object(bot.requests, "get", return_value=response) as get:
+                    with mock.patch.object(bot.requests, "post") as post:
+                        self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
         self.assertEqual(get.call_args.args[0], "https://api.openai.com/v1/models/gpt-5.5-pro")
+        post.assert_not_called()
+
+    def test_direct_openai_preflight_rejects_exhausted_monthly_budget_without_provider_request(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"LLM_API_KEY": "test-key", "LLM_PROVIDER": "openai", "LLM_MODEL": "gpt-5.6-luna"},
+            clear=False,
+        ):
+            with mock.patch.object(
+                bot,
+                "openai_monthly_budget_status",
+                return_value=(False, "openai_monthly_budget_exhausted", None),
+            ):
+                with mock.patch.object(bot.requests, "get") as get:
+                    self.assertEqual(bot.llm_preflight_status(), (False, "openai_monthly_budget_exhausted"))
+        get.assert_not_called()
+
+    def test_direct_openai_call_settles_shared_monthly_budget_from_usage(self) -> None:
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "id": "chatcmpl_1",
+            "usage": {"prompt_tokens": 1000, "completion_tokens": 100},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "openai.json"
+            with mock.patch.dict(
+                "os.environ",
+                {
+                    "LLM_API_KEY": "test-key",
+                    "LLM_PROVIDER": "openai",
+                    "LLM_MODEL": "gpt-test",
+                    "LLM_INPUT_USD_PER_MILLION_TOKENS": "2",
+                    "LLM_OUTPUT_USD_PER_MILLION_TOKENS": "10",
+                    "OPENAI_MONTHLY_BUDGET_USD": "18",
+                    "OPENAI_MONTHLY_BUDGET_STATE_PATH": str(state_path),
+                },
+                clear=False,
+            ):
+                with mock.patch.object(bot.requests, "post", return_value=response):
+                    bot.call_llm(system_prompt="system", user_prompt="user")
+                snapshot = bot.openai_monthly_budget_ledger().status()
+
+        self.assertAlmostEqual(snapshot.spent_usd, 0.003)
+        self.assertAlmostEqual(snapshot.reserved_usd, 0)
+
+    def test_direct_openai_call_does_not_run_when_monthly_budget_is_exhausted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(
+                "os.environ",
+                {
+                    "LLM_API_KEY": "test-key",
+                    "LLM_PROVIDER": "openai",
+                    "LLM_MODEL": "gpt-test",
+                    "LLM_INPUT_USD_PER_MILLION_TOKENS": "2",
+                    "LLM_OUTPUT_USD_PER_MILLION_TOKENS": "10",
+                    "OPENAI_MONTHLY_BUDGET_USD": "0",
+                    "OPENAI_MONTHLY_BUDGET_STATE_PATH": str(Path(tmp) / "openai.json"),
+                },
+                clear=False,
+            ):
+                with mock.patch.object(bot, "report_model_availability"):
+                    with mock.patch.object(bot.requests, "post") as post:
+                        with self.assertRaisesRegex(bot.ProviderBudgetExhausted, "openai_monthly_budget_exhausted"):
+                            bot.call_llm(system_prompt="system", user_prompt="user")
         post.assert_not_called()
 
     def test_call_llm_posts_chat_completion_with_json_schema(self) -> None:

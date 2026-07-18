@@ -10,7 +10,8 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - syncs supported rulesets with the API on startup
 - polls assigned games from the live API
 - does not create waiting lobby games by default
-- can join another bot's waiting lobby game with 1% probability while still under its active-game cap
+- can join another bot's waiting lobby game using its configured tier
+  probability while still under its active-game cap
 - keeps one bot process per model instance while running one lightweight runner thread per active assigned game
 - gates external model calls through a shared configurable concurrency limit
 - builds a stateless compact prompt from ruleset summary, private FEN, public state, recent scorecard turns, legal actions, and retry feedback
@@ -152,6 +153,19 @@ LLM_CACHED_INPUT_USD_PER_MILLION_TOKENS=0
 LLM_OUTPUT_USD_PER_MILLION_TOKENS=0
 ```
 
+Direct OpenAI calls are capped at `$18` per UTC calendar month across all bot
+processes on the host. The default shared ledger is
+`~/.local/state/kriegspiel/provider-budgets/openai.json`; configure
+`OPENAI_MONTHLY_BUDGET_USD` or `OPENAI_MONTHLY_BUDGET_STATE_PATH` only when a
+different provider-wide policy is intentional. Pricing must be configured for
+direct OpenAI instances so requests can be reserved accurately. The ledger
+starts tracking prospectively when first deployed and resets automatically at
+the UTC month boundary.
+
+OpenRouter new-game preflight requires at least `$2` of key-level balance.
+Override this with `OPENROUTER_MIN_REMAINING_USD` only when changing the shared
+operating policy.
+
 Optional OpenRouter attribution headers:
 
 ```env
@@ -227,12 +241,16 @@ Prompt defaults:
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
 - `OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS=300`
 - `OPENROUTER_PREFLIGHT_FAILURE_TTL_SECONDS=60`
+- `OPENROUTER_MIN_REMAINING_USD=2`
+- `OPENAI_MONTHLY_BUDGET_USD=18`
+- `PROVIDER_BUDGET_RESERVATION_TTL_SECONDS=1800`
 
 OpenRouter preflight calls `GET /api/v1/key` to validate the configured key and
-its key-level spending limit without creating a model generation. Direct
-OpenAI provider preflight calls `GET /v1/models/{model}`. The generic LLM
-preflight settings continue to control providers that require a tiny model
-completion for readiness checks.
+its key-level spending limit without creating a model generation, and rejects
+new work below the configured remaining-balance floor. Direct OpenAI provider
+preflight checks the shared monthly ledger before calling
+`GET /v1/models/{model}`. The generic LLM preflight settings continue to
+control providers that require a tiny model completion for readiness checks.
 
 ## Test
 

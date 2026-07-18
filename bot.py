@@ -27,6 +27,14 @@ from urllib.parse import quote
 
 import requests
 
+from provider_budget import (
+    BudgetReservation,
+    BudgetSnapshot,
+    BudgetStateError,
+    MonthlyBudgetLedger,
+    estimate_request_cost_upper_bound_usd,
+)
+
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_STATE_PATH = BASE_DIR / ".bot-state.json"
 DEFAULT_ENV_PATH = BASE_DIR / ".env"
@@ -52,6 +60,9 @@ DEFAULT_LLM_PREFLIGHT_SUCCESS_TTL_SECONDS = 60.0
 DEFAULT_LLM_PREFLIGHT_FAILURE_TTL_SECONDS = 15.0
 DEFAULT_OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS = 300.0
 DEFAULT_OPENROUTER_PREFLIGHT_FAILURE_TTL_SECONDS = 60.0
+DEFAULT_OPENROUTER_MIN_REMAINING_USD = 2.0
+DEFAULT_OPENAI_MONTHLY_BUDGET_USD = 18.0
+DEFAULT_PROVIDER_BUDGET_RESERVATION_TTL_SECONDS = 1800.0
 DEFAULT_LLM_PROVIDER = "openrouter"
 DEFAULT_LLM_API_BASE = "https://openrouter.ai/api/v1"
 DEFAULT_LLM_JSON_MODE = "json_schema"
@@ -97,6 +108,10 @@ _STATE_LOCK = threading.RLock()
 _MODEL_CALL_SEMAPHORE_LOCK = threading.Lock()
 _MODEL_CALL_SEMAPHORE: threading.BoundedSemaphore | None = None
 _MODEL_CALL_SEMAPHORE_LIMIT = 0
+
+
+class ProviderBudgetExhausted(RuntimeError):
+    """Raised before a provider call that would exceed its configured budget."""
 
 
 def configure_runtime_paths(*, env_path: str | Path | None = None, state_path: str | Path | None = None) -> None:
@@ -249,6 +264,48 @@ def llm_output_usd_per_million_tokens() -> float:
     return max(0.0, env_float("LLM_OUTPUT_USD_PER_MILLION_TOKENS", 0.0))
 
 
+def openrouter_min_remaining_usd() -> float:
+    return max(0.0, env_float("OPENROUTER_MIN_REMAINING_USD", DEFAULT_OPENROUTER_MIN_REMAINING_USD))
+
+
+def openai_monthly_budget_usd() -> float:
+    return max(0.0, env_float("OPENAI_MONTHLY_BUDGET_USD", DEFAULT_OPENAI_MONTHLY_BUDGET_USD))
+
+
+def openai_monthly_budget_state_path() -> Path:
+    default = Path.home() / ".local" / "state" / "kriegspiel" / "provider-budgets" / "openai.json"
+    return Path(os.environ.get("OPENAI_MONTHLY_BUDGET_STATE_PATH", str(default))).expanduser()
+
+
+def provider_budget_reservation_ttl_seconds() -> float:
+    return max(
+        60.0,
+        env_float(
+            "PROVIDER_BUDGET_RESERVATION_TTL_SECONDS",
+            DEFAULT_PROVIDER_BUDGET_RESERVATION_TTL_SECONDS,
+        ),
+    )
+
+
+def openai_monthly_budget_ledger() -> MonthlyBudgetLedger:
+    return MonthlyBudgetLedger(
+        openai_monthly_budget_state_path(),
+        limit_usd=openai_monthly_budget_usd(),
+        reservation_ttl_seconds=provider_budget_reservation_ttl_seconds(),
+    )
+
+
+def openai_monthly_budget_status() -> tuple[bool, str, BudgetSnapshot | None]:
+    try:
+        snapshot = openai_monthly_budget_ledger().status()
+    except (BudgetStateError, OSError, ValueError) as exc:
+        logger.error("direct OpenAI monthly budget is unavailable: %s", exc)
+        return False, "openai_monthly_budget_unavailable", None
+    if snapshot.remaining_microusd <= 0:
+        return False, "openai_monthly_budget_exhausted", snapshot
+    return True, "ok", snapshot
+
+
 def model_availability_provider() -> str:
     return (
         os.environ.get("KRIEGSPIEL_MODEL_AVAILABILITY_PROVIDER", DEFAULT_MODEL_AVAILABILITY_PROVIDER).strip().lower()
@@ -341,6 +398,65 @@ def llm_usage_cost_usd(usage: dict[str, Any]) -> float:
         + cached_tokens * llm_cached_input_usd_per_million_tokens()
         + output_tokens * llm_output_usd_per_million_tokens()
     ) / USD_PER_MILLION_TOKENS
+
+
+def llm_usage_has_billable_tokens(payload: dict[str, Any]) -> bool:
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    return llm_input_tokens(usage) > 0 or llm_output_tokens(usage) > 0
+
+
+def reserve_direct_openai_request(payload: dict[str, Any]) -> tuple[MonthlyBudgetLedger, BudgetReservation] | None:
+    if llm_provider() != "openai":
+        return None
+    input_rate = max(llm_input_usd_per_million_tokens(), llm_cached_input_usd_per_million_tokens())
+    if input_rate <= 0 and llm_output_usd_per_million_tokens() <= 0:
+        raise ProviderBudgetExhausted("openai_monthly_budget_pricing_unavailable")
+
+    maximum_cost_usd = estimate_request_cost_upper_bound_usd(
+        payload,
+        input_usd_per_million_tokens=input_rate,
+        output_usd_per_million_tokens=llm_output_usd_per_million_tokens(),
+        maximum_output_tokens=llm_max_output_tokens(),
+    )
+    ledger = openai_monthly_budget_ledger()
+    try:
+        reservation = ledger.reserve(maximum_cost_usd)
+    except (BudgetStateError, OSError, ValueError) as exc:
+        logger.error("direct OpenAI monthly budget reservation failed: %s", exc)
+        raise ProviderBudgetExhausted("openai_monthly_budget_unavailable") from exc
+    if reservation is None:
+        raise ProviderBudgetExhausted("openai_monthly_budget_exhausted")
+    return ledger, reservation
+
+
+def settle_direct_openai_request(
+    budget: tuple[MonthlyBudgetLedger, BudgetReservation] | None,
+    payload: dict[str, Any] | None,
+) -> BudgetSnapshot | None:
+    if budget is None:
+        return None
+    ledger, reservation = budget
+    actual_cost_usd = None
+    if payload is not None and llm_usage_has_billable_tokens(payload):
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        actual_cost_usd = llm_usage_cost_usd(usage)
+    try:
+        snapshot = ledger.settle(reservation, actual_cost_usd)
+    except (BudgetStateError, OSError, ValueError) as exc:
+        logger.error("direct OpenAI monthly budget settlement failed: %s", exc)
+        return None
+    if actual_cost_usd is None:
+        logger.warning(
+            "direct OpenAI response cost was unknown; charged reserved budget $%.6f",
+            reservation.amount_microusd / USD_PER_MILLION_TOKENS,
+        )
+    if snapshot.spent_microusd > snapshot.limit_microusd:
+        logger.error(
+            "direct OpenAI monthly budget exceeded during settlement: spent=$%.6f limit=$%.6f",
+            snapshot.spent_usd,
+            snapshot.limit_usd,
+        )
+    return snapshot
 
 
 def log_llm_usage(*, game_id: str, model: str, payload: dict[str, Any]) -> None:
@@ -1243,7 +1359,24 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
                     reason="openrouter_key_limit_exhausted",
                     ttl_seconds=llm_preflight_failure_ttl_seconds(),
                 )
+            if (
+                isinstance(limit_remaining, (int, float))
+                and not isinstance(limit_remaining, bool)
+                and limit_remaining < openrouter_min_remaining_usd()
+            ):
+                return cache_llm_preflight(
+                    False,
+                    reason="openrouter_key_limit_below_minimum",
+                    ttl_seconds=llm_preflight_failure_ttl_seconds(),
+                )
         elif llm_provider() == "openai":
+            budget_ready, budget_reason, _snapshot = openai_monthly_budget_status()
+            if not budget_ready:
+                return cache_llm_preflight(
+                    False,
+                    reason=budget_reason,
+                    ttl_seconds=llm_preflight_failure_ttl_seconds(),
+                )
             response = requests.get(
                 f"{llm_base_url()}/models/{quote(llm_model(), safe='')}",
                 headers=llm_headers(llm_api_key()),
@@ -1287,12 +1420,45 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
     return cache_llm_preflight(True, reason="ok", ttl_seconds=llm_preflight_success_ttl_seconds())
 
 
+def mark_direct_openai_budget_unavailable(reason: str) -> None:
+    cache_llm_preflight(False, reason=reason, ttl_seconds=llm_preflight_failure_ttl_seconds())
+    report_model_availability(False, reason, force=True)
+
+
+def post_llm_request(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        budget = reserve_direct_openai_request(payload)
+    except ProviderBudgetExhausted as exc:
+        mark_direct_openai_budget_unavailable(str(exc))
+        raise
+
+    try:
+        with model_call_semaphore():
+            response = requests.post(
+                f"{llm_base_url()}/{endpoint}",
+                headers=llm_headers(llm_api_key()),
+                json=payload,
+                timeout=llm_timeout_seconds(),
+            )
+        response.raise_for_status()
+        response_payload = response.json()
+        if not isinstance(response_payload, dict):
+            raise ValueError("provider response payload must be an object")
+    except Exception:
+        settle_direct_openai_request(budget, None)
+        raise
+
+    snapshot = settle_direct_openai_request(budget, response_payload)
+    if snapshot is not None and snapshot.remaining_microusd <= 0:
+        mark_direct_openai_budget_unavailable("openai_monthly_budget_exhausted")
+    return response_payload
+
+
 def call_llm(
     *,
     system_prompt: str,
     user_prompt: str,
 ) -> dict[str, Any]:
-    api_key = llm_api_key()
     model = llm_model()
     if llm_wire_api() == "responses":
         payload = {
@@ -1308,15 +1474,7 @@ def call_llm(
             payload["tools"] = [responses_action_tool()]
             payload["tool_choice"] = {"type": "function", "name": ACTION_SCHEMA_NAME}
 
-        with model_call_semaphore():
-            response = requests.post(
-                f"{llm_base_url()}/responses",
-                headers=llm_headers(api_key),
-                json=payload,
-                timeout=llm_timeout_seconds(),
-            )
-        response.raise_for_status()
-        return response.json()
+        return post_llm_request("responses", payload)
 
     payload: dict[str, Any] = {
         "model": model,
@@ -1333,15 +1491,7 @@ def call_llm(
         payload["tools"] = [action_tool()]
         payload["tool_choice"] = {"type": "function", "function": {"name": ACTION_SCHEMA_NAME}}
 
-    with model_call_semaphore():
-        response = requests.post(
-            f"{llm_base_url()}/chat/completions",
-            headers=llm_headers(api_key),
-            json=payload,
-            timeout=llm_timeout_seconds(),
-        )
-    response.raise_for_status()
-    return response.json()
+    return post_llm_request("chat/completions", payload)
 
 
 def parse_json_object_text(text: str, *, label: str = "Model response") -> dict[str, Any]:
@@ -1589,6 +1739,8 @@ def choose_ranked_actions(
         decisions = normalize_ranked_decisions(parse_model_decision(raw_response), state)
         if decisions:
             return decisions, "model", None
+    except ProviderBudgetExhausted as exc:
+        logger.warning("model selection skipped: %s", exc)
     except requests.RequestException as exc:
         reason = describe_http_error(exc)
         logger.warning("model selection failed: %s", reason)
