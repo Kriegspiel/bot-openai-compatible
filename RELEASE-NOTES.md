@@ -5,6 +5,16 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Provider Spend Guards
+
+- **OpenRouter Floor**: report the provider unavailable and reject new
+  bot-vs-bot work when the authenticated key reports less than `$2` remaining.
+- **OpenAI Monthly Cap**: enforce a shared `$18` cap per UTC calendar month
+  across every direct OpenAI instance on the host.
+- **Strict Accounting**: reserve a conservative upper-bound cost before each
+  direct OpenAI request, then settle the shared ledger from returned token
+  usage; unknown costs consume the full reservation.
+
 ## Non-Billable OpenRouter Availability
 
 - **Idle Cost Fix**: replace OpenRouter's periodic model-completion preflight
