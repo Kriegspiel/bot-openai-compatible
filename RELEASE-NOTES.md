@@ -5,6 +5,17 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Non-Billable OpenRouter Availability
+
+- **Idle Cost Fix**: replace OpenRouter's periodic model-completion preflight
+  with the authenticated, non-generating `GET /api/v1/key` status endpoint.
+- **Cadence**: cache successful OpenRouter status checks for five minutes and
+  failures for one minute while continuing to publish fresh availability to the
+  Kriegspiel backend.
+- **Direct OpenAI**: use the non-generating model metadata endpoint for direct
+  OpenAI instances; preserve the tiny completion fallback only for unknown
+  OpenAI-compatible providers.
+
 ## Tiered Bot Join Budgets
 
 - **Lobby Policy**: derive bot-vs-bot join probability from

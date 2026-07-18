@@ -23,6 +23,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -49,6 +50,8 @@ DEFAULT_LLM_MAX_PROMPT_TURNS = 10
 DEFAULT_LLM_MAX_OUTPUT_TOKENS = 512
 DEFAULT_LLM_PREFLIGHT_SUCCESS_TTL_SECONDS = 60.0
 DEFAULT_LLM_PREFLIGHT_FAILURE_TTL_SECONDS = 15.0
+DEFAULT_OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS = 300.0
+DEFAULT_OPENROUTER_PREFLIGHT_FAILURE_TTL_SECONDS = 60.0
 DEFAULT_LLM_PROVIDER = "openrouter"
 DEFAULT_LLM_API_BASE = "https://openrouter.ai/api/v1"
 DEFAULT_LLM_JSON_MODE = "json_schema"
@@ -254,19 +257,41 @@ def model_availability_provider() -> str:
 
 
 def llm_preflight_success_ttl_seconds() -> float:
-    raw = os.environ.get("LLM_PREFLIGHT_SUCCESS_TTL_SECONDS", str(DEFAULT_LLM_PREFLIGHT_SUCCESS_TTL_SECONDS)).strip()
+    if llm_provider() == "openrouter":
+        raw = os.environ.get(
+            "OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS",
+            str(DEFAULT_OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS),
+        ).strip()
+        default = DEFAULT_OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS
+    else:
+        raw = os.environ.get(
+            "LLM_PREFLIGHT_SUCCESS_TTL_SECONDS",
+            str(DEFAULT_LLM_PREFLIGHT_SUCCESS_TTL_SECONDS),
+        ).strip()
+        default = DEFAULT_LLM_PREFLIGHT_SUCCESS_TTL_SECONDS
     try:
         return max(5.0, float(raw))
     except ValueError:
-        return DEFAULT_LLM_PREFLIGHT_SUCCESS_TTL_SECONDS
+        return default
 
 
 def llm_preflight_failure_ttl_seconds() -> float:
-    raw = os.environ.get("LLM_PREFLIGHT_FAILURE_TTL_SECONDS", str(DEFAULT_LLM_PREFLIGHT_FAILURE_TTL_SECONDS)).strip()
+    if llm_provider() == "openrouter":
+        raw = os.environ.get(
+            "OPENROUTER_PREFLIGHT_FAILURE_TTL_SECONDS",
+            str(DEFAULT_OPENROUTER_PREFLIGHT_FAILURE_TTL_SECONDS),
+        ).strip()
+        default = DEFAULT_OPENROUTER_PREFLIGHT_FAILURE_TTL_SECONDS
+    else:
+        raw = os.environ.get(
+            "LLM_PREFLIGHT_FAILURE_TTL_SECONDS",
+            str(DEFAULT_LLM_PREFLIGHT_FAILURE_TTL_SECONDS),
+        ).strip()
+        default = DEFAULT_LLM_PREFLIGHT_FAILURE_TTL_SECONDS
     try:
         return max(1.0, float(raw))
     except ValueError:
-        return DEFAULT_LLM_PREFLIGHT_FAILURE_TTL_SECONDS
+        return default
 
 
 def model_availability_report_interval_seconds() -> float:
@@ -1158,7 +1183,7 @@ def cache_llm_preflight(ready: bool, *, reason: str, ttl_seconds: float) -> tupl
     return ready, reason
 
 
-def describe_http_error(exc: requests.RequestException) -> str:
+def describe_http_error(exc: Exception) -> str:
     response = getattr(exc, "response", None)
     if response is None:
         return str(exc) or exc.__class__.__name__
@@ -1196,7 +1221,36 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
         return bool(_LLM_PREFLIGHT_CACHE["ready"]), str(_LLM_PREFLIGHT_CACHE["reason"])
 
     try:
-        if llm_wire_api() == "responses":
+        if llm_provider() == "openrouter":
+            response = requests.get(
+                f"{llm_base_url()}/key",
+                headers=llm_headers(llm_api_key()),
+                timeout=llm_timeout_seconds(),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                return cache_llm_preflight(
+                    False,
+                    reason="invalid_openrouter_key_status",
+                    ttl_seconds=llm_preflight_failure_ttl_seconds(),
+                )
+            limit_remaining = data.get("limit_remaining")
+            if isinstance(limit_remaining, (int, float)) and not isinstance(limit_remaining, bool) and limit_remaining <= 0:
+                return cache_llm_preflight(
+                    False,
+                    reason="openrouter_key_limit_exhausted",
+                    ttl_seconds=llm_preflight_failure_ttl_seconds(),
+                )
+        elif llm_provider() == "openai":
+            response = requests.get(
+                f"{llm_base_url()}/models/{quote(llm_model(), safe='')}",
+                headers=llm_headers(llm_api_key()),
+                timeout=llm_timeout_seconds(),
+            )
+            response.raise_for_status()
+        elif llm_wire_api() == "responses":
             endpoint = "responses"
             payload = {
                 "model": llm_model(),
@@ -1216,15 +1270,16 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
                 llm_max_tokens_parameter(): 16,
             }
             apply_reasoning_effort(payload)
-        with model_call_semaphore():
-            response = requests.post(
-                f"{llm_base_url()}/{endpoint}",
-                headers=llm_headers(llm_api_key()),
-                json=payload,
-                timeout=llm_timeout_seconds(),
-            )
-        response.raise_for_status()
-    except requests.RequestException as exc:
+        if llm_provider() not in {"openrouter", "openai"}:
+            with model_call_semaphore():
+                response = requests.post(
+                    f"{llm_base_url()}/{endpoint}",
+                    headers=llm_headers(llm_api_key()),
+                    json=payload,
+                    timeout=llm_timeout_seconds(),
+                )
+            response.raise_for_status()
+    except (requests.RequestException, ValueError) as exc:
         reason = describe_http_error(exc)
         logger.warning("llm preflight failed: %s", reason)
         return cache_llm_preflight(False, reason=reason, ttl_seconds=llm_preflight_failure_ttl_seconds())
