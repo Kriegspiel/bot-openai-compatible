@@ -14,6 +14,7 @@ import bot
 
 class BotTests(unittest.TestCase):
     def setUp(self) -> None:
+        bot.close_http_session()
         bot._LLM_PREFLIGHT_CACHE.update({"ready": None, "expires_at": 0.0, "reason": "unchecked"})
         bot._MODEL_AVAILABILITY_REPORT_CACHE.update({"ready": None, "reason": "", "reported_at": 0.0})
         bot.configure_model_call_semaphore(bot.DEFAULT_MAX_CONCURRENT_MODEL_CALLS)
@@ -21,7 +22,48 @@ class BotTests(unittest.TestCase):
         bot.configure_runtime_paths()
 
     def tearDown(self) -> None:
+        bot.close_http_session()
         bot.configure_runtime_paths()
+
+    def test_http_session_is_reused_per_thread_and_closed_by_its_owner(self) -> None:
+        main_session = mock.Mock()
+        runner_session = mock.Mock()
+        runner_seen: list[object] = []
+
+        with mock.patch.object(bot.requests, "Session", side_effect=[main_session, runner_session]) as session_factory:
+            self.assertIs(bot.http_session(), main_session)
+            self.assertIs(bot.http_session(), main_session)
+
+            def worker() -> None:
+                runner_seen.append(bot.http_session())
+                runner_seen.append(bot.http_session())
+                bot.close_http_session()
+
+            thread = threading.Thread(target=worker)
+            thread.start()
+            thread.join(timeout=1)
+            self.assertFalse(thread.is_alive())
+            bot.close_http_session()
+
+        self.assertEqual(session_factory.call_count, 2)
+        self.assertEqual(runner_seen, [runner_session, runner_session])
+        main_session.close.assert_called_once_with()
+        runner_session.close.assert_called_once_with()
+
+    def test_post_json_does_not_retry_ambiguous_mutation_failure(self) -> None:
+        session = mock.Mock()
+        session.post.side_effect = bot.requests.ConnectionError("response was lost")
+
+        with mock.patch.object(bot, "http_session", return_value=session):
+            with self.assertRaises(bot.requests.ConnectionError):
+                bot.post_json("/game/gid1/move", {"uci": "e2e4"})
+
+        session.post.assert_called_once_with(
+            f"{bot.base_url()}/game/gid1/move",
+            headers=bot.auth_headers(),
+            json={"uci": "e2e4"},
+            timeout=bot.DEFAULT_TIMEOUT_SECONDS,
+        )
 
     def test_runtime_paths_isolate_instance_env_and_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -870,8 +912,8 @@ class BotTests(unittest.TestCase):
             {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "get", return_value=response) as get:
-                with mock.patch.object(bot.requests, "post") as post:
+            with mock.patch.object(bot, "http_get", return_value=response) as get:
+                with mock.patch.object(bot, "http_post") as post:
                     self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
                     self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
@@ -889,7 +931,7 @@ class BotTests(unittest.TestCase):
             {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "get", return_value=response):
+            with mock.patch.object(bot, "http_get", return_value=response):
                 self.assertEqual(bot.llm_preflight_status(), (False, "openrouter_key_limit_exhausted"))
 
     def test_openrouter_preflight_requires_two_dollars_remaining(self) -> None:
@@ -901,7 +943,7 @@ class BotTests(unittest.TestCase):
             {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "get", return_value=response):
+            with mock.patch.object(bot, "http_get", return_value=response):
                 self.assertEqual(bot.llm_preflight_status(), (False, "openrouter_key_limit_below_minimum"))
 
         bot._LLM_PREFLIGHT_CACHE.update({"ready": None, "expires_at": 0.0, "reason": "unchecked"})
@@ -911,7 +953,7 @@ class BotTests(unittest.TestCase):
             {"LLM_PROVIDER": "openrouter", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "get", return_value=response):
+            with mock.patch.object(bot, "http_get", return_value=response):
                 self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
     def test_non_openrouter_preflight_keeps_completion_probe(self) -> None:
@@ -922,7 +964,7 @@ class BotTests(unittest.TestCase):
             {"LLM_PROVIDER": "custom", "LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"},
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+            with mock.patch.object(bot, "http_post", return_value=response) as post:
                 self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
         self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
@@ -945,8 +987,8 @@ class BotTests(unittest.TestCase):
             clear=False,
         ):
             with mock.patch.object(bot, "openai_monthly_budget_status", return_value=(True, "ok", None)):
-                with mock.patch.object(bot.requests, "get", return_value=response) as get:
-                    with mock.patch.object(bot.requests, "post") as post:
+                with mock.patch.object(bot, "http_get", return_value=response) as get:
+                    with mock.patch.object(bot, "http_post") as post:
                         self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
         self.assertEqual(get.call_args.args[0], "https://api.openai.com/v1/models/gpt-5.6-luna")
@@ -968,8 +1010,8 @@ class BotTests(unittest.TestCase):
             clear=False,
         ):
             with mock.patch.object(bot, "openai_monthly_budget_status", return_value=(True, "ok", None)):
-                with mock.patch.object(bot.requests, "get", return_value=response) as get:
-                    with mock.patch.object(bot.requests, "post") as post:
+                with mock.patch.object(bot, "http_get", return_value=response) as get:
+                    with mock.patch.object(bot, "http_post") as post:
                         self.assertEqual(bot.llm_preflight_status(), (True, "ok"))
 
         self.assertEqual(get.call_args.args[0], "https://api.openai.com/v1/models/gpt-5.5-pro")
@@ -986,7 +1028,7 @@ class BotTests(unittest.TestCase):
                 "openai_monthly_budget_status",
                 return_value=(False, "openai_monthly_budget_exhausted", None),
             ):
-                with mock.patch.object(bot.requests, "get") as get:
+                with mock.patch.object(bot, "http_get") as get:
                     self.assertEqual(bot.llm_preflight_status(), (False, "openai_monthly_budget_exhausted"))
         get.assert_not_called()
 
@@ -1012,7 +1054,7 @@ class BotTests(unittest.TestCase):
                 },
                 clear=False,
             ):
-                with mock.patch.object(bot.requests, "post", return_value=response):
+                with mock.patch.object(bot, "http_post", return_value=response):
                     bot.call_llm(system_prompt="system", user_prompt="user")
                 snapshot = bot.openai_monthly_budget_ledger().status()
 
@@ -1035,7 +1077,7 @@ class BotTests(unittest.TestCase):
                 clear=False,
             ):
                 with mock.patch.object(bot, "report_model_availability"):
-                    with mock.patch.object(bot.requests, "post") as post:
+                    with mock.patch.object(bot, "http_post") as post:
                         with self.assertRaisesRegex(bot.ProviderBudgetExhausted, "openai_monthly_budget_exhausted"):
                             bot.call_llm(system_prompt="system", user_prompt="user")
         post.assert_not_called()
@@ -1057,7 +1099,7 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+            with mock.patch.object(bot, "http_post", return_value=response) as post:
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
 
         self.assertEqual(post.call_args.args[0], "https://llm.example/v1/chat/completions")
@@ -1089,7 +1131,7 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+            with mock.patch.object(bot, "http_post", return_value=response) as post:
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "resp_1"})
 
         self.assertEqual(post.call_args.args[0], "https://api.openai.com/v1/responses")
@@ -1123,7 +1165,7 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+            with mock.patch.object(bot, "http_post", return_value=response) as post:
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
 
         payload = post.call_args.kwargs["json"]
@@ -1146,7 +1188,7 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+            with mock.patch.object(bot, "http_post", return_value=response) as post:
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
 
         payload = post.call_args.kwargs["json"]
@@ -1174,7 +1216,7 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+            with mock.patch.object(bot, "http_post", return_value=response) as post:
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "resp_1"})
 
         payload = post.call_args.kwargs["json"]
@@ -1201,7 +1243,7 @@ class BotTests(unittest.TestCase):
             },
             clear=False,
         ):
-            with mock.patch.object(bot.requests, "post", return_value=response) as post:
+            with mock.patch.object(bot, "http_post", return_value=response) as post:
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
 
         payload = post.call_args.kwargs["json"]
@@ -1237,7 +1279,7 @@ class BotTests(unittest.TestCase):
                 errors.append(exc)
 
         with mock.patch.dict("os.environ", {"LLM_API_KEY": "test-key", "LLM_MODEL": "provider/model"}, clear=False):
-            with mock.patch.object(bot.requests, "post", side_effect=slow_post):
+            with mock.patch.object(bot, "http_post", side_effect=slow_post):
                 threads = [threading.Thread(target=worker) for _ in range(5)]
                 for thread in threads:
                     thread.start()
@@ -1286,18 +1328,20 @@ class BotTests(unittest.TestCase):
                                 with mock.patch.object(bot, "maybe_join_bot_lobby_game"):
                                     with mock.patch.object(bot, "discovery_poll_delay", return_value=9.25) as delay:
                                         with mock.patch.object(bot.time, "sleep", side_effect=KeyboardInterrupt) as sleep:
-                                            with self.assertRaises(KeyboardInterrupt):
-                                                bot.run_loop(
-                                                    2,
-                                                    discovery_poll_seconds=10,
-                                                    discovery_poll_jitter_ratio=0.15,
-                                                )
+                                            with mock.patch.object(bot, "close_http_session") as close_session:
+                                                with self.assertRaises(KeyboardInterrupt):
+                                                    bot.run_loop(
+                                                        2,
+                                                        discovery_poll_seconds=10,
+                                                        discovery_poll_jitter_ratio=0.15,
+                                                    )
 
         scheduler_class.assert_called_once_with(poll_seconds=2)
         scheduler.reconcile.assert_called_once_with([])
         delay.assert_called_once_with(10, 0.15)
         sleep.assert_called_once_with(9.25)
         scheduler.stop_all.assert_called_once_with()
+        close_session.assert_called_once_with()
 
     def test_runner_scheduler_starts_one_runner_per_game_without_duplicates(self) -> None:
         class FakeRunner:
@@ -1377,18 +1421,20 @@ class BotTests(unittest.TestCase):
 
         with mock.patch.object(bot, "get_json", side_effect=fake_get_json):
             with mock.patch.object(bot, "maybe_play_game", side_effect=fake_maybe_play_game):
-                slow_runner.start()
-                self.assertTrue(slow_started.wait(timeout=0.5))
-                fast_runner.start()
-                self.assertTrue(fast_played.wait(timeout=0.5))
-                slow_runner.stop()
-                fast_runner.stop()
-                release_slow.set()
-                slow_runner.join(timeout=1)
-                fast_runner.join(timeout=1)
+                with mock.patch.object(bot, "close_http_session") as close_session:
+                    slow_runner.start()
+                    self.assertTrue(slow_started.wait(timeout=0.5))
+                    fast_runner.start()
+                    self.assertTrue(fast_played.wait(timeout=0.5))
+                    slow_runner.stop()
+                    fast_runner.stop()
+                    release_slow.set()
+                    slow_runner.join(timeout=1)
+                    fast_runner.join(timeout=1)
 
         self.assertFalse(slow_runner.is_alive())
         self.assertFalse(fast_runner.is_alive())
+        self.assertEqual(close_session.call_count, 2)
 
     def test_maybe_join_bot_lobby_game_skips_join_when_llm_unavailable(self) -> None:
         games = []
