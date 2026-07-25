@@ -53,6 +53,8 @@ DEFAULT_MODEL_BATCH_SIZE = 10
 DEFAULT_MAX_MODEL_BATCHES_PER_TURN = 5
 DEFAULT_MAX_CONCURRENT_MODEL_CALLS = 5
 DEFAULT_ACTIVE_GAME_DISCOVERY_LIMIT = 100
+DEFAULT_DISCOVERY_POLL_SECONDS = 10.0
+DEFAULT_DISCOVERY_POLL_JITTER_RATIO = 0.15
 DEFAULT_RESIGN_AFTER_MOVE_NUMBER = 256
 DEFAULT_LLM_MAX_PROMPT_TURNS = 10
 DEFAULT_LLM_MAX_OUTPUT_TOKENS = 512
@@ -2032,12 +2034,35 @@ class GameRunnerScheduler:
         self.runners.clear()
 
 
-def run_loop(poll_seconds: float) -> None:
+def discovery_poll_delay(
+    poll_seconds: float,
+    jitter_ratio: float = DEFAULT_DISCOVERY_POLL_JITTER_RATIO,
+    *,
+    rng: Any = random,
+) -> float:
+    interval = max(0.5, float(poll_seconds))
+    bounded_jitter_ratio = max(0.0, min(float(jitter_ratio), 0.5))
+    jitter = interval * bounded_jitter_ratio
+    return float(rng.uniform(interval - jitter, interval + jitter))
+
+
+def run_loop(
+    poll_seconds: float,
+    *,
+    discovery_poll_seconds: float = DEFAULT_DISCOVERY_POLL_SECONDS,
+    discovery_poll_jitter_ratio: float = DEFAULT_DISCOVERY_POLL_JITTER_RATIO,
+) -> None:
     concurrency = max_concurrent_model_calls()
     configure_model_call_semaphore(concurrency)
     discovery_limit = active_game_discovery_limit()
     logger.info("model-call concurrency configured: max=%s", concurrency)
     logger.info("active-game discovery limit configured: max=%s", discovery_limit)
+    logger.info(
+        "polling configured: active-game=%ss discovery=%ss jitter=%.0f%%",
+        max(0.5, float(poll_seconds)),
+        max(0.5, float(discovery_poll_seconds)),
+        max(0.0, min(float(discovery_poll_jitter_ratio), 0.5)) * 100,
+    )
     scheduler = GameRunnerScheduler(poll_seconds=poll_seconds)
     try:
         while True:
@@ -2050,7 +2075,7 @@ def run_loop(poll_seconds: float) -> None:
                 scheduler.reconcile(games)
             except requests.RequestException as exc:
                 logger.warning("poll failed: %s", exc)
-            time.sleep(poll_seconds)
+            time.sleep(discovery_poll_delay(discovery_poll_seconds, discovery_poll_jitter_ratio))
     finally:
         scheduler.stop_all()
 
@@ -2068,7 +2093,24 @@ def main() -> None:
         help="Path to the bot instance state file.",
     )
     parser.add_argument("--register", action="store_true", help="Register the bot and persist the returned token.")
-    parser.add_argument("--poll-seconds", type=float, default=3.0, help="Seconds between /game/mine/active polls.")
+    parser.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=3.0,
+        help="Seconds between active-game state polls.",
+    )
+    parser.add_argument(
+        "--discovery-poll-seconds",
+        type=float,
+        default=DEFAULT_DISCOVERY_POLL_SECONDS,
+        help="Base seconds between /game/mine/active discovery polls.",
+    )
+    parser.add_argument(
+        "--discovery-poll-jitter-ratio",
+        type=float,
+        default=DEFAULT_DISCOVERY_POLL_JITTER_RATIO,
+        help="Per-cycle discovery jitter ratio, clamped between 0 and 0.5.",
+    )
     args = parser.parse_args()
 
     configure_runtime_paths(env_path=args.env_file, state_path=args.state_file)
@@ -2087,7 +2129,11 @@ def main() -> None:
         logger.warning("LLM_MODEL is missing; bot-vs-bot joins will be skipped and turns will use fallback mode.")
 
     sync_bot_profile()
-    run_loop(args.poll_seconds)
+    run_loop(
+        args.poll_seconds,
+        discovery_poll_seconds=args.discovery_poll_seconds,
+        discovery_poll_jitter_ratio=args.discovery_poll_jitter_ratio,
+    )
 
 
 if __name__ == "__main__":

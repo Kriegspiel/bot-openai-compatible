@@ -1262,6 +1262,43 @@ class BotTests(unittest.TestCase):
             ],
         )
 
+    def test_discovery_poll_delay_applies_bounded_jitter(self) -> None:
+        rng = mock.Mock()
+        rng.uniform.return_value = 11.5
+
+        self.assertEqual(bot.discovery_poll_delay(10, 0.15, rng=rng), 11.5)
+        rng.uniform.assert_called_once_with(8.5, 11.5)
+
+        rng.reset_mock()
+        rng.uniform.return_value = 0.5
+        self.assertEqual(bot.discovery_poll_delay(0, -1, rng=rng), 0.5)
+        rng.uniform.assert_called_once_with(0.5, 0.5)
+
+    def test_run_loop_uses_separate_discovery_and_active_game_intervals(self) -> None:
+        scheduler = mock.Mock()
+
+        with mock.patch.object(bot, "max_concurrent_model_calls", return_value=5):
+            with mock.patch.object(bot, "active_game_discovery_limit", return_value=100):
+                with mock.patch.object(bot, "GameRunnerScheduler", return_value=scheduler) as scheduler_class:
+                    with mock.patch.object(bot, "report_current_model_availability"):
+                        with mock.patch.object(bot, "get_json", return_value={"games": []}):
+                            with mock.patch.object(bot, "maybe_create_lobby_game"):
+                                with mock.patch.object(bot, "maybe_join_bot_lobby_game"):
+                                    with mock.patch.object(bot, "discovery_poll_delay", return_value=9.25) as delay:
+                                        with mock.patch.object(bot.time, "sleep", side_effect=KeyboardInterrupt) as sleep:
+                                            with self.assertRaises(KeyboardInterrupt):
+                                                bot.run_loop(
+                                                    2,
+                                                    discovery_poll_seconds=10,
+                                                    discovery_poll_jitter_ratio=0.15,
+                                                )
+
+        scheduler_class.assert_called_once_with(poll_seconds=2)
+        scheduler.reconcile.assert_called_once_with([])
+        delay.assert_called_once_with(10, 0.15)
+        sleep.assert_called_once_with(9.25)
+        scheduler.stop_all.assert_called_once_with()
+
     def test_runner_scheduler_starts_one_runner_per_game_without_duplicates(self) -> None:
         class FakeRunner:
             def __init__(self, game_id: str) -> None:
