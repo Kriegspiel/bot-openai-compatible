@@ -5,6 +5,17 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## Thread-Local HTTP Connection Reuse
+
+- **Connection Pooling**: reuse one `requests.Session` in the main loop and one
+  separate session in each active-game runner instead of opening a new
+  connection for every backend and model-provider request.
+- **Thread Isolation**: never share a session across runtime threads, and close
+  each session when its owning loop or runner stops.
+- **Mutation Safety**: keep automatic HTTP retries disabled so ambiguous
+  move, ask-any, resign, and other state-changing POST failures are surfaced
+  instead of being submitted twice.
+
 ## Split Assignment Discovery Polling
 
 - **Independent Cadence**: keep active-game state polling at its configured

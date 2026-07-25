@@ -15,6 +15,8 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - can join another bot's waiting lobby game using its configured tier
   probability while still under its active-game cap
 - keeps one bot process per model instance while running one lightweight runner thread per active assigned game
+- reuses one HTTP session in the main loop and a separate session in each
+  active-game runner thread
 - gates external model calls through a shared configurable concurrency limit
 - builds a stateless compact prompt from ruleset summary, private FEN, public state, recent scorecard turns, legal actions, and retry feedback
 - asks the configured model for ranked candidate actions in compact JSON
@@ -211,6 +213,12 @@ globally throttled, but provider model calls are guarded by
 `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS`, which defaults to `5`. This prevents large
 tournament batches from timing out behind one serial model loop while avoiding a
 process-per-game deployment shape.
+
+The main loop and every active-game runner own separate `requests.Session`
+instances, reused for both backend and model-provider calls made by that thread.
+Sessions are never shared across threads. The runtime does not configure
+automatic HTTP retries, so ambiguous state-changing requests such as move,
+ask-any, and resign submissions are not repeated automatically.
 
 The runtime separates assignment discovery from active play:
 

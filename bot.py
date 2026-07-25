@@ -107,6 +107,7 @@ logger = logging.getLogger(__name__)
 _LLM_PREFLIGHT_CACHE = {"ready": None, "expires_at": 0.0, "reason": "unchecked"}
 _MODEL_AVAILABILITY_REPORT_CACHE = {"ready": None, "reason": "", "reported_at": 0.0}
 _STATE_LOCK = threading.RLock()
+_HTTP_SESSION_LOCAL = threading.local()
 _MODEL_CALL_SEMAPHORE_LOCK = threading.Lock()
 _MODEL_CALL_SEMAPHORE: threading.BoundedSemaphore | None = None
 _MODEL_CALL_SEMAPHORE_LIMIT = 0
@@ -137,6 +138,32 @@ def load_env_file(path: str | Path | None = None) -> None:
 
 def base_url() -> str:
     return os.environ.get("KRIEGSPIEL_API_BASE", "http://localhost:8000").rstrip("/")
+
+
+def http_session() -> requests.Session:
+    session = getattr(_HTTP_SESSION_LOCAL, "session", None)
+    if session is None:
+        session = requests.Session()
+        _HTTP_SESSION_LOCAL.session = session
+    return session
+
+
+def close_http_session() -> None:
+    session = getattr(_HTTP_SESSION_LOCAL, "session", None)
+    if session is None:
+        return
+    try:
+        session.close()
+    finally:
+        delattr(_HTTP_SESSION_LOCAL, "session")
+
+
+def http_get(url: str, **kwargs: Any) -> requests.Response:
+    return http_session().get(url, **kwargs)
+
+
+def http_post(url: str, **kwargs: Any) -> requests.Response:
+    return http_session().post(url, **kwargs)
 
 
 def env_float(name: str, default: float) -> float:
@@ -575,25 +602,28 @@ def maybe_restore_token() -> None:
 
 
 def register_bot() -> None:
-    response = requests.post(
-        f"{base_url()}/auth/bots/register",
-        json={
-            "username": os.environ.get("KRIEGSPIEL_BOT_USERNAME", "openrouterbot"),
-            "display_name": os.environ.get("KRIEGSPIEL_BOT_DISPLAY_NAME", "OpenRouter Bot"),
-            "owner_email": os.environ.get("KRIEGSPIEL_BOT_OWNER_EMAIL", "bot-openai-compatible@kriegspiel.org"),
-            "description": os.environ.get(
-                "KRIEGSPIEL_BOT_DESCRIPTION",
-                "Model-driven Kriegspiel bot that uses an OpenAI-compatible chat-completions provider.",
-            ),
-            "listed": True,
-            "supported_rule_variants": supported_rule_variants(),
-        },
-        timeout=DEFAULT_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    save_token(payload["api_token"])
-    logger.debug("%s", json.dumps(payload, indent=2))
+    try:
+        response = http_post(
+            f"{base_url()}/auth/bots/register",
+            json={
+                "username": os.environ.get("KRIEGSPIEL_BOT_USERNAME", "openrouterbot"),
+                "display_name": os.environ.get("KRIEGSPIEL_BOT_DISPLAY_NAME", "OpenRouter Bot"),
+                "owner_email": os.environ.get("KRIEGSPIEL_BOT_OWNER_EMAIL", "bot-openai-compatible@kriegspiel.org"),
+                "description": os.environ.get(
+                    "KRIEGSPIEL_BOT_DESCRIPTION",
+                    "Model-driven Kriegspiel bot that uses an OpenAI-compatible chat-completions provider.",
+                ),
+                "listed": True,
+                "supported_rule_variants": supported_rule_variants(),
+            },
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        save_token(payload["api_token"])
+        logger.debug("%s", json.dumps(payload, indent=2))
+    finally:
+        close_http_session()
 
 
 def sync_bot_profile() -> bool:
@@ -606,19 +636,19 @@ def sync_bot_profile() -> bool:
 
 
 def get_json(path: str) -> dict[str, Any]:
-    response = requests.get(f"{base_url()}{path}", headers=auth_headers(), timeout=DEFAULT_TIMEOUT_SECONDS)
+    response = http_get(f"{base_url()}{path}", headers=auth_headers(), timeout=DEFAULT_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
 
 
 def get_public_user(username: str) -> dict[str, Any]:
-    response = requests.get(f"{base_url()}/user/{username}", headers=auth_headers(), timeout=DEFAULT_TIMEOUT_SECONDS)
+    response = http_get(f"{base_url()}/user/{username}", headers=auth_headers(), timeout=DEFAULT_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
 
 
 def post_json(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    response = requests.post(
+    response = http_post(
         f"{base_url()}{path}",
         headers=auth_headers(),
         json=payload or {},
@@ -1340,7 +1370,7 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
 
     try:
         if llm_provider() == "openrouter":
-            response = requests.get(
+            response = http_get(
                 f"{llm_base_url()}/key",
                 headers=llm_headers(llm_api_key()),
                 timeout=llm_timeout_seconds(),
@@ -1379,7 +1409,7 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
                     reason=budget_reason,
                     ttl_seconds=llm_preflight_failure_ttl_seconds(),
                 )
-            response = requests.get(
+            response = http_get(
                 f"{llm_base_url()}/models/{quote(llm_model(), safe='')}",
                 headers=llm_headers(llm_api_key()),
                 timeout=llm_timeout_seconds(),
@@ -1407,7 +1437,7 @@ def llm_preflight_status(force: bool = False) -> tuple[bool, str]:
             apply_reasoning_effort(payload)
         if llm_provider() not in {"openrouter", "openai"}:
             with model_call_semaphore():
-                response = requests.post(
+                response = http_post(
                     f"{llm_base_url()}/{endpoint}",
                     headers=llm_headers(llm_api_key()),
                     json=payload,
@@ -1436,7 +1466,7 @@ def post_llm_request(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         with model_call_semaphore():
-            response = requests.post(
+            response = http_post(
                 f"{llm_base_url()}/{endpoint}",
                 headers=llm_headers(llm_api_key()),
                 json=payload,
@@ -1975,6 +2005,7 @@ class GameRunner:
 
                 self._wait()
         finally:
+            close_http_session()
             logger.info("%s: stopped game runner (%s)", self.game_id, stop_reason)
 
 
@@ -2063,6 +2094,7 @@ def run_loop(
         max(0.5, float(discovery_poll_seconds)),
         max(0.0, min(float(discovery_poll_jitter_ratio), 0.5)) * 100,
     )
+    logger.info("HTTP connection reuse configured: one session per runtime thread; automatic retries disabled")
     scheduler = GameRunnerScheduler(poll_seconds=poll_seconds)
     try:
         while True:
@@ -2078,6 +2110,7 @@ def run_loop(
             time.sleep(discovery_poll_delay(discovery_poll_seconds, discovery_poll_jitter_ratio))
     finally:
         scheduler.stop_all()
+        close_http_session()
 
 
 def main() -> None:
