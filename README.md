@@ -9,6 +9,8 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 - registers as a listed Kriegspiel bot
 - syncs supported rulesets with the API on startup
 - polls assigned games from the live API
+- discovers assigned games every ten seconds with jitter while keeping
+  active-game state polls on their faster independent cadence
 - does not create waiting lobby games by default
 - can join another bot's waiting lobby game using its configured tier
   probability while still under its active-game cap
@@ -209,6 +211,15 @@ globally throttled, but provider model calls are guarded by
 `LLM_BOT_MAX_CONCURRENT_MODEL_CALLS`, which defaults to `5`. This prevents large
 tournament batches from timing out behind one serial model loop while avoiding a
 process-per-game deployment shape.
+
+The runtime separates assignment discovery from active play:
+
+- `--poll-seconds 2` controls each active game's state-poll cadence
+- `--discovery-poll-seconds 10` controls the base
+  `/game/mine/active` cadence
+- `--discovery-poll-jitter-ratio 0.15` randomizes every discovery delay by
+  plus or minus 15 percent so independently started instances do not settle
+  into a synchronized polling burst
 
 Active-game discovery requests `/game/mine/active` with
 `KRIEGSPIEL_ACTIVE_GAME_DISCOVERY_LIMIT`, defaulting to `100`, so tournament

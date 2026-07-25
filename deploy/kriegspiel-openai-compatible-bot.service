@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/ubuntu/dev/kriegspiel/bot-openai-compatible
-ExecStart=/home/ubuntu/dev/kriegspiel/bot-openai-compatible/.venv/bin/python /home/ubuntu/dev/kriegspiel/bot-openai-compatible/bot.py --poll-seconds 2
+ExecStart=/home/ubuntu/dev/kriegspiel/bot-openai-compatible/.venv/bin/python /home/ubuntu/dev/kriegspiel/bot-openai-compatible/bot.py --poll-seconds 2 --discovery-poll-seconds 10
 Restart=always
 RestartSec=5
 
