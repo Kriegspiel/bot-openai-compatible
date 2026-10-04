@@ -177,6 +177,14 @@ LLM_CACHED_INPUT_USD_PER_MILLION_TOKENS=0
 LLM_OUTPUT_USD_PER_MILLION_TOKENS=0
 ```
 
+`LLM_CACHE_WRITE_INPUT_USD_PER_MILLION_TOKENS` optionally prices Responses
+`usage.input_tokens_details.cache_write_tokens`; it defaults to the ordinary
+input rate for existing configurations. Cache reads and writes are subtracted
+from total input before charging ordinary input. The request reservation uses
+the highest input, cache-read, or cache-write rate, and settlement uses actual
+usage. Nonzero writes are reported as the backend's existing
+`cache_creation_input_tokens` field.
+
 Direct OpenAI calls are capped at `$18` per UTC calendar month across all bot
 processes on the host. The default shared ledger is
 `~/.local/state/kriegspiel/provider-budgets/openai.json`; configure
@@ -307,10 +315,11 @@ A production host can run the bot as a service with `deploy/kriegspiel-openai-co
 The T5 `gpt-astra` instance template uses stable username `llm_gpt_astra`,
 display name GPT Astra, model `gpt-6-astra`, standard execution and `max`
 reasoning effort. It sends strict function actions through the existing Responses
-client. Input/cached-input/output prices are $10/$1/$50 per million tokens;
+client. Input/cache-read/cache-write/output prices are $10/$1/$12.50/$50 per million tokens;
 output includes reasoning tokens. Its 32768-token total output cap and 600-second
 timeout keep requests bounded, with the existing shared $18 monthly OpenAI
 ledger. Prompts above 272000 input tokens have higher provider rates; this
 Kriegspiel instance uses the runtime's bounded turn history. See the official
-[Astra specifications](https://developers.openai.com/api/docs/models/gpt-6-astra)
+[Astra specifications](https://developers.openai.com/api/docs/models/gpt-6-astra),
+[prompt-cache usage and pricing](https://developers.openai.com/api/docs/guides/prompt-caching),
 and [Responses reasoning/tool requirements](https://developers.openai.com/api/docs/guides/reasoning).

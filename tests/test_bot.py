@@ -598,6 +598,77 @@ class BotTests(unittest.TestCase):
             },
         )
 
+    def test_astra_cache_writes_partition_input_and_use_write_price(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            bot.load_env_file(bot.BASE_DIR / "instances/gpt-astra.env.example")
+            self.assertAlmostEqual(bot.llm_usage_cost_usd({
+                "input_tokens": 2000,
+                "input_tokens_details": {"cache_write_tokens": 2000},
+                "output_tokens": 400,
+            }), 0.045)
+            self.assertAlmostEqual(bot.llm_usage_cost_usd({
+                "input_tokens": 2000,
+                "input_tokens_details": {"cached_tokens": 1000, "cache_write_tokens": 500},
+                "output_tokens": 400,
+                "output_tokens_details": {"reasoning_tokens": 300},
+            }), 0.03225)
+
+    def test_cache_write_tokens_are_clamped_and_invalid_counts_ignored(self) -> None:
+        usage = {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 80, "cache_write_tokens": 500}}
+        self.assertEqual(bot.llm_cache_write_input_tokens(usage), 20)
+        usage["input_tokens_details"]["cached_tokens"] = 200
+        self.assertEqual(bot.llm_cache_write_input_tokens(usage), 0)
+        for invalid in (True, -5, "invalid", None):
+            with self.subTest(invalid=invalid):
+                usage["input_tokens_details"] = {"cache_write_tokens": invalid}
+                self.assertEqual(bot.llm_cache_write_input_tokens(usage), 0)
+
+    def test_cache_write_price_defaults_to_input_for_existing_configs(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "LLM_INPUT_USD_PER_MILLION_TOKENS": "10",
+            "LLM_CACHED_INPUT_USD_PER_MILLION_TOKENS": "1",
+            "LLM_OUTPUT_USD_PER_MILLION_TOKENS": "50",
+        }, clear=True):
+            self.assertEqual(bot.llm_cache_write_input_usd_per_million_tokens(), 10)
+            self.assertAlmostEqual(bot.llm_usage_cost_usd({
+                "input_tokens": 2000, "input_tokens_details": {"cache_write_tokens": 2000}, "output_tokens": 400,
+            }), 0.04)
+
+    def test_cache_write_usage_maps_to_existing_backend_creation_field(self) -> None:
+        usage = {"input_tokens": 2000, "input_tokens_details": {"cached_tokens": 500, "cache_write_tokens": 1000}, "output_tokens": 400}
+        with mock.patch.dict(os.environ, {}, clear=True):
+            bot.load_env_file(bot.BASE_DIR / "instances/gpt-astra.env.example")
+            with mock.patch.object(bot, "report_model_usage") as report:
+                bot.log_llm_usage(game_id="fixture", model="gpt-6-astra", payload={"usage": usage})
+        self.assertEqual(report.call_args.args[0]["cache_creation_input_tokens"], 1000)
+        self.assertAlmostEqual(report.call_args.args[0]["cost_usd"], 0.038)
+        self.assertNotIn("cache_write_input_tokens", report.call_args.args[0])
+
+    def test_astra_reservation_covers_writes_and_settlement_charges_actual_usage(self) -> None:
+        payload = {"model": "gpt-6-astra", "input": "x" * 5000, "max_output_tokens": 32768}
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {}, clear=True):
+                bot.load_env_file(bot.BASE_DIR / "instances/gpt-astra.env.example")
+                os.environ["OPENAI_MONTHLY_BUDGET_STATE_PATH"] = str(Path(tmp) / "openai.json")
+                budget = bot.reserve_direct_openai_request(payload)
+                expected = bot.estimate_request_cost_upper_bound_usd(
+                    payload, input_usd_per_million_tokens=12.5, output_usd_per_million_tokens=50,
+                    maximum_output_tokens=32768,
+                )
+                old_maximum = bot.estimate_request_cost_upper_bound_usd(
+                    payload, input_usd_per_million_tokens=10, output_usd_per_million_tokens=50,
+                    maximum_output_tokens=32768,
+                )
+                self.assertIsNotNone(budget)
+                self.assertAlmostEqual(budget[1].amount_microusd / 1_000_000, expected, places=5)
+                self.assertGreater(budget[1].amount_microusd / 1_000_000, old_maximum)
+                snapshot = bot.settle_direct_openai_request(budget, {"usage": {
+                    "input_tokens": 2000, "input_tokens_details": {"cache_write_tokens": 2000}, "output_tokens": 400,
+                }})
+                self.assertAlmostEqual(snapshot.spent_usd, 0.045)
+                self.assertEqual(snapshot.reserved_usd, 0)
+                self.assertEqual(snapshot.limit_usd, 18)
+
     def test_choose_ranked_actions_is_stateless(self) -> None:
         state = {
             "rule_variant": "berkeley_any",
@@ -1308,6 +1379,7 @@ class BotTests(unittest.TestCase):
             self.assertEqual(bot.llm_timeout_seconds(), 600)
             self.assertEqual(bot.llm_wire_api(), "responses")
             self.assertEqual(bot.llm_max_output_tokens(), 32768)
+            self.assertEqual(bot.llm_cache_write_input_usd_per_million_tokens(), 12.5)
             self.assertAlmostEqual(bot.llm_usage_cost_usd({
                 "input_tokens": 1000, "input_tokens_details": {"cached_tokens": 200},
                 "output_tokens": 400, "output_tokens_details": {"reasoning_tokens": 300},

@@ -316,6 +316,13 @@ def llm_output_usd_per_million_tokens() -> float:
     return max(0.0, env_float("LLM_OUTPUT_USD_PER_MILLION_TOKENS", 0.0))
 
 
+def llm_cache_write_input_usd_per_million_tokens() -> float:
+    return max(
+        0.0,
+        env_float("LLM_CACHE_WRITE_INPUT_USD_PER_MILLION_TOKENS", llm_input_usd_per_million_tokens()),
+    )
+
+
 def openrouter_min_remaining_usd() -> float:
     return max(0.0, env_float("OPENROUTER_MIN_REMAINING_USD", DEFAULT_OPENROUTER_MIN_REMAINING_USD))
 
@@ -440,14 +447,22 @@ def llm_cached_input_tokens(usage: dict[str, Any]) -> int:
     return cached
 
 
+def llm_cache_write_input_tokens(usage: dict[str, Any]) -> int:
+    details = usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
+    available = max(0, llm_input_tokens(usage) - llm_cached_input_tokens(usage))
+    return min(usage_token_count(details, "cache_write_tokens"), available)
+
+
 def llm_usage_cost_usd(usage: dict[str, Any]) -> float:
     input_tokens = llm_input_tokens(usage)
     cached_tokens = min(llm_cached_input_tokens(usage), input_tokens)
-    uncached_input_tokens = max(0, input_tokens - cached_tokens)
+    cache_write_tokens = llm_cache_write_input_tokens(usage)
+    uncached_input_tokens = max(0, input_tokens - cached_tokens - cache_write_tokens)
     output_tokens = llm_output_tokens(usage)
     return (
         uncached_input_tokens * llm_input_usd_per_million_tokens()
         + cached_tokens * llm_cached_input_usd_per_million_tokens()
+        + cache_write_tokens * llm_cache_write_input_usd_per_million_tokens()
         + output_tokens * llm_output_usd_per_million_tokens()
     ) / USD_PER_MILLION_TOKENS
 
@@ -460,7 +475,11 @@ def llm_usage_has_billable_tokens(payload: dict[str, Any]) -> bool:
 def reserve_direct_openai_request(payload: dict[str, Any]) -> tuple[MonthlyBudgetLedger, BudgetReservation] | None:
     if llm_provider() != "openai":
         return None
-    input_rate = max(llm_input_usd_per_million_tokens(), llm_cached_input_usd_per_million_tokens())
+    input_rate = max(
+        llm_input_usd_per_million_tokens(),
+        llm_cached_input_usd_per_million_tokens(),
+        llm_cache_write_input_usd_per_million_tokens(),
+    )
     if input_rate <= 0 and llm_output_usd_per_million_tokens() <= 0:
         raise ProviderBudgetExhausted("openai_monthly_budget_pricing_unavailable")
 
@@ -533,19 +552,21 @@ def log_llm_usage(*, game_id: str, model: str, payload: dict[str, Any]) -> None:
         output_tokens,
         cost_usd,
     )
-    report_model_usage(
-        {
-            "game_id": game_id,
-            "provider": provider,
-            "model": model,
-            "response_id": response_id or None,
-            "input_tokens": input_tokens,
-            "cached_input_tokens": cached_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
-            "cost_usd": cost_usd,
-        }
-    )
+    usage_report = {
+        "game_id": game_id,
+        "provider": provider,
+        "model": model,
+        "response_id": response_id or None,
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "cost_usd": cost_usd,
+    }
+    cache_write_tokens = llm_cache_write_input_tokens(usage)
+    if cache_write_tokens:
+        usage_report["cache_creation_input_tokens"] = cache_write_tokens
+    report_model_usage(usage_report)
 
 
 def auth_headers() -> dict[str, str]:
