@@ -124,12 +124,25 @@ class BotTests(unittest.TestCase):
             "{\"m\":[\"e2e4\"]}",
         )
 
-    def test_extract_response_text_reads_reasoning_aliases(self) -> None:
-        payload = {"choices": [{"message": {"content": "", "reasoning_content": "{\"m\":[\"e2e4\"]}"}}]}
-        self.assertEqual(
-            bot.extract_response_text(payload),
-            "{\"m\":[\"e2e4\"]}",
-        )
+    def test_extract_response_text_rejects_reasoning_without_final_answer(self) -> None:
+        payload = {"choices": [{"message": {"content": "", "reasoning_content": '{"m":["e2e4"]}'}}]}
+        with self.assertRaisesRegex(ValueError, "No text"):
+            bot.extract_response_text(payload)
+
+    def test_responses_final_answer_takes_precedence_over_reasoning_summary(self) -> None:
+        payload = {"output": [
+            {"type": "reasoning", "summary": [{"text": '{"m":["d2d4"]}'}]},
+            {"type": "message", "content": [{"type": "output_text", "text": '{"m":["e2e4"]}'}]},
+        ]}
+        self.assertEqual(bot.parse_model_decision(payload), {"m": ["e2e4"]})
+
+    def test_incomplete_actions_are_rejected_even_with_parseable_json(self) -> None:
+        for payload in (
+            {"choices": [{"finish_reason": "length", "message": {"content": '{"m":["e2e4"]}'}}]},
+            {"status": "incomplete", "output_text": '{"m":["e2e4"]}'},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                bot.parse_model_decision(payload)
 
     def test_parse_model_decision_reads_openai_tool_call(self) -> None:
         payload = {
@@ -1149,28 +1162,13 @@ class BotTests(unittest.TestCase):
         self.assertNotIn("response_format", payload)
 
     def test_call_llm_can_use_max_completion_tokens_for_direct_openai(self) -> None:
-        response = mock.Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"id": "chatcmpl_1"}
-
-        with mock.patch.dict(
-            "os.environ",
-            {
-                "LLM_API_KEY": "test-key",
-                "LLM_MODEL": "gpt-5.6-luna",
-                "LLM_API_BASE": "https://api.openai.com/v1",
-                "LLM_MAX_OUTPUT_TOKENS": "2048",
-                "LLM_MAX_TOKENS_PARAMETER": "max_completion_tokens",
-                "LLM_REASONING_EFFORT": "NONE",
-            },
-            clear=False,
-        ):
-            with mock.patch.object(bot, "http_post", return_value=response) as post:
-                self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
-
-        payload = post.call_args.kwargs["json"]
+        env = {"LLM_PROVIDER": "openai", "LLM_MODEL": "gpt-5.5", "LLM_MAX_OUTPUT_TOKENS": "2048", "LLM_MAX_TOKENS_PARAMETER": "max_completion_tokens", "LLM_REASONING_EFFORT": "NONE"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(bot, "post_llm_request", return_value={}) as post:
+            bot.call_llm(system_prompt="system", user_prompt="user")
+        payload = post.call_args.args[1]
         self.assertEqual(payload["max_completion_tokens"], 2048)
         self.assertEqual(payload["reasoning_effort"], "none")
+        self.assertNotIn("reasoning", payload)
         self.assertNotIn("max_tokens", payload)
 
     def test_call_llm_can_opt_into_openai_tool_calls(self) -> None:
@@ -1247,17 +1245,17 @@ class BotTests(unittest.TestCase):
                 self.assertEqual(bot.call_llm(system_prompt="system", user_prompt="user"), {"id": "chatcmpl_1"})
 
         payload = post.call_args.kwargs["json"]
-        self.assertEqual(payload["reasoning_effort"], "none")
+        self.assertEqual(payload["reasoning"], {"effort": "none"})
         self.assertNotIn("response_format", payload)
         self.assertEqual(payload["tools"][0]["function"]["name"], bot.ACTION_SCHEMA_NAME)
 
     def test_refreshed_instance_templates_send_compatible_action_requests(self) -> None:
         state = {"possible_actions": ["move"], "allowed_moves": ["e2e4"]}
         for instance, model, tier, wire_api, effort, max_tokens in (
-            ("gpt56-luna", "gpt-6-luna", "T2", "chat_completions", "none", 2048),
-            ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "low", 8192),
-            ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "", 2048),
-            ("qwen36-flash", "qwen/qwen3.8-flash", "T3", "chat_completions", "", 2048),
+            ("gpt56-luna", "gpt-6-luna", "T2", "responses", "max", 32768),
+            ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "max", 32768),
+            ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "high", 32768),
+            ("qwen36-flash", "qwen/qwen3.8-flash", "T3", "chat_completions", "", 32768),
         ):
             with self.subTest(instance=instance):
                 response = mock.Mock()
@@ -1293,7 +1291,8 @@ class BotTests(unittest.TestCase):
                     self.assertNotIn("messages", payload)
                 else:
                     self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
-                    self.assertEqual(payload.get("reasoning_effort", ""), effort)
+                    self.assertNotIn("reasoning_effort", payload)
+                    self.assertEqual(payload["reasoning"], {"enabled": True, "max_tokens": 24576} if instance == "qwen36-flash" else {"effort": effort})
                     self.assertEqual(payload.get("max_completion_tokens", payload.get("max_tokens")), max_tokens)
                     if instance != "qwen36-flash":
                         self.assertTrue(payload["tools"][0]["function"]["strict"])
@@ -1503,6 +1502,68 @@ class BotTests(unittest.TestCase):
                                         with mock.patch.object(bot, "post_json") as post_json:
                                             self.assertFalse(bot.maybe_join_bot_lobby_game(games, rng=bot.random))
                                             post_json.assert_not_called()
+
+
+    def test_openrouter_reasoning_controls_preserve_action_schema(self) -> None:
+        cases = (
+            ({"LLM_REASONING_EFFORT": "xhigh"}, {"effort": "xhigh"}),
+            ({"LLM_REASONING_ENABLED": "true"}, {"enabled": True}),
+            ({"LLM_REASONING_ENABLED": "true", "LLM_REASONING_MAX_TOKENS": "24576"}, {"enabled": True, "max_tokens": 24576}),
+        )
+        for controls, expected in cases:
+            for wire_api in ("chat_completions", "responses"):
+                env = {"LLM_PROVIDER": "openrouter", "LLM_MODEL": "qwen/qwen3.8-flash", "LLM_MAX_OUTPUT_TOKENS": "32768", "LLM_WIRE_API": wire_api, **controls}
+                response = {"choices": [{"message": {"content": '{"m":["e2e4"]}', "reasoning_content": '{"m":["d2d4"]}'}}]}
+                with self.subTest(controls=controls, wire_api=wire_api), mock.patch.dict(os.environ, env, clear=True):
+                    with mock.patch.object(bot, "post_llm_request", return_value=response) as post:
+                        result = bot.call_llm(system_prompt="only legal moves", user_prompt="e2e4")
+                    payload = post.call_args.args[1]
+                    self.assertEqual(payload["reasoning"], expected)
+                    self.assertNotIn("reasoning_effort", payload)
+                    self.assertEqual(bot.parse_model_decision(result), {"m": ["e2e4"]})
+                    schema = payload["text"]["format"]["schema"] if wire_api == "responses" else payload["response_format"]["json_schema"]["schema"]
+                    self.assertEqual(schema, bot.action_schema()["schema"])
+
+    def test_openrouter_invalid_reasoning_controls_fail_before_request(self) -> None:
+        for controls in (
+            {"LLM_REASONING_ENABLED": "perhaps"},
+            {"LLM_REASONING_EFFORT": "ultra"},
+            {"LLM_REASONING_MAX_TOKENS": "bad"},
+            {"LLM_REASONING_MAX_TOKENS": "0"},
+            {"LLM_REASONING_MAX_TOKENS": "32768"},
+            {"LLM_REASONING_MAX_TOKENS": "8192", "LLM_REASONING_EFFORT": "max"},
+        ):
+            with self.subTest(controls=controls), mock.patch.dict(os.environ, {"LLM_PROVIDER": "openrouter", "LLM_MAX_OUTPUT_TOKENS": "32768", **controls}, clear=True):
+                with mock.patch.object(bot, "post_llm_request") as post, self.assertRaises(ValueError):
+                    bot.call_llm(system_prompt="system", user_prompt="turn")
+                post.assert_not_called()
+
+    def test_active_model_templates_select_supported_highest_levels(self) -> None:
+        named = {
+            "gpt56-luna": "max", "gpt56-sol": "max", "gpt55": "xhigh", "gpt55-pro": "xhigh",
+            "grok45": "xhigh", "gemini31-flash-lite": "high", "gemini31-pro-preview": "high",
+            "gemini35-flash": "high", "gpt-oss-120b": "high", "mistral-medium35": "high",
+            "nemotron-super": "medium", "nemotron-ultra": "high",
+        }
+        enabled = {"gemma4-31b", "hermes4-405b", "minimax-m3", "nemotron-nano", "qwen37-plus"}
+        unsupported = {"hermes3-70b", "llama4-maverick", "mistral-large3", "phi4", "qwen-plus"}
+        for instance in set(named) | enabled | unsupported:
+            with self.subTest(instance=instance), mock.patch.dict(os.environ, {}, clear=True):
+                bot.load_env_file(bot.BASE_DIR / "instances" / f"{instance}.env.example")
+                with mock.patch.object(bot, "post_llm_request", return_value={}) as post:
+                    bot.call_llm(system_prompt="system", user_prompt="turn")
+                payload = post.call_args.args[1]
+                if instance in named:
+                    self.assertEqual(payload["reasoning"], {"effort": named[instance]})
+                    self.assertLessEqual(bot.llm_max_output_tokens(), 32768)
+                    self.assertGreaterEqual(bot.llm_timeout_seconds(), 300)
+                elif instance in enabled:
+                    self.assertEqual(payload["reasoning"], {"enabled": True})
+                else:
+                    self.assertNotIn("reasoning", payload)
+                if instance.startswith("gpt5"):
+                    self.assertEqual(post.call_args.args[0], "responses")
+                    self.assertEqual(os.environ["OPENAI_MONTHLY_BUDGET_USD"], "18")
 
 
 if __name__ == "__main__":
