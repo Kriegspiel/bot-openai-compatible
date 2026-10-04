@@ -1264,6 +1264,8 @@ class BotTests(unittest.TestCase):
                 response.raise_for_status.return_value = None
                 if wire_api == "responses":
                     response.json.return_value = {"output": [{"type": "function_call", "name": bot.ACTION_SCHEMA_NAME, "arguments": '{"m":["e2e4"]}'}]}
+                elif instance == "qwen36-flash":
+                    response.json.return_value = {"choices": [{"message": {"content": '{"m":["e2e4"]}'}}]}
                 else:
                     response.json.return_value = {"choices": [{"message": {"tool_calls": [{"type": "function", "function": {"name": bot.ACTION_SCHEMA_NAME, "arguments": '{"m":["e2e4"]}'}}]}}]}
                 with mock.patch.dict("os.environ", {}, clear=True):
@@ -1276,7 +1278,12 @@ class BotTests(unittest.TestCase):
                                 result = bot.call_llm(system_prompt="system", user_prompt="turn")
                 payload = post.call_args.kwargs["json"]
                 self.assertEqual(payload["model"], model)
-                self.assertNotIn("response_format", payload)
+                if instance == "qwen36-flash":
+                    self.assertNotIn("tools", payload)
+                    self.assertNotIn("tool_choice", payload)
+                    self.assertEqual(payload["response_format"]["json_schema"]["schema"], bot.action_schema()["schema"])
+                else:
+                    self.assertNotIn("response_format", payload)
                 self.assertNotIn("text", payload)
                 if wire_api == "responses":
                     self.assertTrue(post.call_args.args[0].endswith("/responses"))
@@ -1288,7 +1295,8 @@ class BotTests(unittest.TestCase):
                     self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
                     self.assertEqual(payload.get("reasoning_effort", ""), effort)
                     self.assertEqual(payload.get("max_completion_tokens", payload.get("max_tokens")), max_tokens)
-                    self.assertTrue(payload["tools"][0]["function"]["strict"])
+                    if instance != "qwen36-flash":
+                        self.assertTrue(payload["tools"][0]["function"]["strict"])
                 self.assertEqual(bot.normalize_ranked_decisions(bot.parse_model_decision(result), state), [{"action": "move", "uci": "e2e4"}])
 
     def test_model_call_semaphore_limits_concurrent_call_llm_execution(self) -> None:

@@ -133,7 +133,9 @@ reasoning and action output. GPT Luna retains Chat Completions with function
 tools and reasoning `none`, with a 2048-token output limit.
 
 The refreshed Gemini Flash and Qwen Flash T3 templates use
-`google/gemini-3.8-flash` and `qwen/qwen3.8-flash`. Instance filenames and bot
+`google/gemini-3.8-flash` and `qwen/qwen3.8-flash`. Qwen uses strict JSON text
+output (`LLM_USE_TOOLS=false`) because its thinking mode rejects forced tool
+choice. Instance filenames and bot
 usernames intentionally retain their old versioned names to preserve existing
 profiles, ratings, and game-history links; public display names have no model
 version. Prices in the templates are used for usage attribution and the
