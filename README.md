@@ -93,50 +93,53 @@ LLM_MODEL=<openrouter-model-slug>
 LLM_API_KEY=<openrouter-api-key>
 ```
 
-Direct OpenAI default:
+The active direct OpenAI templates use the Responses API with strict function
+output. GPT Luna and GPT Sol use `max`; GPT-5.5 and GPT-5.5 Pro use `xhigh`,
+which is their highest supported level. Luna requires Responses for function
+calls when thinking is enabled. Each template bounds total output at 32768
+tokens, including reasoning. Timeouts are 300 seconds, or 600 for Pro.
+The shared $18 monthly OpenAI ledger remains unchanged.
 
 ```env
 LLM_PROVIDER=openai
 LLM_API_BASE=https://api.openai.com/v1
-LLM_MODEL=<openai-model-id>
-LLM_API_KEY=<openai-api-key>
-LLM_MAX_TOKENS_PARAMETER=max_completion_tokens
-LLM_REASONING_EFFORT=none
-```
-
-Direct OpenAI models that are not served through Chat Completions can opt into
-the Responses API instead. GPT-5.5 Pro currently uses `medium` because the
-direct model rejected reasoning effort `none` during production validation:
-
-```env
-LLM_PROVIDER=openai
-LLM_API_BASE=https://api.openai.com/v1
-LLM_MODEL=<openai-model-id>
-LLM_API_KEY=<openai-api-key>
+LLM_MODEL=gpt-6-luna
+LLM_API_KEY=
 LLM_WIRE_API=responses
-LLM_REASONING_EFFORT=medium
+LLM_REASONING_EFFORT=max
+LLM_MAX_OUTPUT_TOKENS=32768
+LLM_TIMEOUT_SECONDS=300
 ```
 
-Current production direct OpenAI reasoning defaults:
+For OpenRouter, the runtime sends its unified `reasoning` object:
 
-| Instance | Public model | Wire API | Default reasoning level |
-|---|---|---|---|
-| `gpt55` | GPT-5.5 | Chat Completions | `none` |
-| `gpt55-pro` | GPT-5.5 Pro | Responses API | `medium` |
-| `gpt56-luna` | GPT Luna (`gpt-6-luna`), T2 | Chat Completions | `none` |
-| `gpt56-sol` | GPT Sol (`gpt-6.1-sol`), T4 | Responses API | `low` |
+- `LLM_REASONING_EFFORT` selects a level supported by the specific route.
+- `LLM_REASONING_ENABLED=true` enables models with an on/off thinking control.
+- `LLM_REASONING_MAX_TOKENS` sets a thinking budget, strictly below the total
+  output cap. Do not combine a token budget with an effort setting.
 
-GPT-6.1 Sol requires Responses for function tool calls and does not support
-reasoning `none`. Its template uses `LLM_WIRE_API=responses`,
-`LLM_REASONING_EFFORT=low`, and a hard 8192-token total output limit covering
-reasoning and action output. GPT Luna retains Chat Completions with function
-tools and reasoning `none`, with a 2048-token output limit.
+The Gemini templates, GPT-OSS, Mistral Medium, and Nemotron Ultra use `high`.
+Nemotron Super uses `medium`, its highest exposed regular reasoning mode.
+Gemma, Hermes 4, MiniMax M3, Nemotron Nano, and Qwen 3.7 use thinking enabled.
+Grok uses `xhigh`. Hermes 3, Llama Maverick, Mistral Large, Phi 4, and Qwen Plus
+have no reasoning control; their requests omit reasoning parameters.
+Qwen Flash uses a 24576-token thinking budget and 32768 total output tokens:
+Alibaba maps budgets above 16384 to native `xhigh`, while its much larger
+native default is constrained by our per-request cap. These are maximum effort
+settings with bounded token spending. A cap does not guarantee every difficult
+request can finish; truncated and reasoning-only responses are rejected before
+choosing a game action.
+
+Capabilities follow the [OpenRouter model catalogue](https://openrouter.ai/api/v1/models)
+and [reasoning controls](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens),
+the official [OpenAI model pages](https://developers.openai.com/api/docs/models),
+and [Alibaba's Qwen API reference](https://docs.modelstudio.console.alibabacloud.com/en/model-studio/qwen-api-via-openai-chat-completions).
 
 The refreshed Gemini Flash and Qwen Flash T3 templates use
 `google/gemini-3.8-flash` and `qwen/qwen3.8-flash`. Qwen uses strict JSON text
 output (`LLM_USE_TOOLS=false`) because its thinking mode rejects forced tool
-choice. Instance filenames and bot
-usernames intentionally retain their old versioned names to preserve existing
+choice. Instance filenames retain their old versioned names. The upgraded
+bots use stable usernames while deployment preserves existing account IDs and
 profiles, ratings, and game-history links; public display names have no model
 version. Prices in the templates are used for usage attribution and the
 existing direct OpenAI shared monthly cap.
@@ -270,9 +273,9 @@ Prompt defaults:
 - `LLM_MAX_OUTPUT_TOKENS=512`
 - `LLM_MAX_TOKENS_PARAMETER=max_tokens` (`max_completion_tokens` for direct
   OpenAI GPT-5.6/GPT-5.5-class chat completions)
-- `LLM_REASONING_EFFORT=` (`none` for direct OpenAI GPT-5.6/GPT-5.5-class
-  chat completions that opt into tool calls; `medium` for the direct OpenAI
-  GPT-5.5 Pro Responses instance)
+- `LLM_REASONING_EFFORT=` (configured per model in instance templates)
+- `LLM_REASONING_ENABLED=` (OpenRouter only)
+- `LLM_REASONING_MAX_TOKENS=` (OpenRouter only)
 - `LLM_PREFLIGHT_SUCCESS_TTL_SECONDS=60`
 - `LLM_PREFLIGHT_FAILURE_TTL_SECONDS=15`
 - `OPENROUTER_PREFLIGHT_SUCCESS_TTL_SECONDS=300`

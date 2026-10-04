@@ -235,6 +235,29 @@ def llm_reasoning_effort() -> str:
     return os.environ.get("LLM_REASONING_EFFORT", "").strip().lower()
 
 
+def openrouter_reasoning_config() -> dict[str, Any]:
+    config: dict[str, Any] = {}
+    effort = llm_reasoning_effort()
+    if effort:
+        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("Invalid LLM_REASONING_EFFORT")
+        config["effort"] = effort
+    enabled = os.environ.get("LLM_REASONING_ENABLED", "").strip().lower()
+    if enabled:
+        if enabled not in {"true", "false"}:
+            raise ValueError("LLM_REASONING_ENABLED must be true or false")
+        config["enabled"] = enabled == "true"
+    budget = os.environ.get("LLM_REASONING_MAX_TOKENS", "").strip()
+    if budget:
+        tokens = int(budget)
+        if tokens < 1 or tokens >= llm_max_output_tokens():
+            raise ValueError("Reasoning budget must be positive and below the output token limit")
+        if effort:
+            raise ValueError("Configure reasoning effort or a token budget, not both")
+        config["max_tokens"] = tokens
+    return config
+
+
 def llm_json_mode() -> str:
     raw = os.environ.get("LLM_JSON_MODE", DEFAULT_LLM_JSON_MODE).strip().lower()
     return raw if raw in {"json_schema", "json_object", "none"} else DEFAULT_LLM_JSON_MODE
@@ -1309,12 +1332,22 @@ def apply_responses_text_format(payload: dict[str, Any]) -> None:
 
 
 def apply_reasoning_effort(payload: dict[str, Any]) -> None:
+    if llm_provider() == "openrouter":
+        config = openrouter_reasoning_config()
+        if config:
+            payload["reasoning"] = config
+        return
     effort = llm_reasoning_effort()
     if effort:
         payload["reasoning_effort"] = effort
 
 
 def apply_responses_reasoning_effort(payload: dict[str, Any]) -> None:
+    if llm_provider() == "openrouter":
+        config = openrouter_reasoning_config()
+        if config:
+            payload["reasoning"] = config
+        return
     effort = llm_reasoning_effort()
     if effort:
         payload["reasoning"] = {"effort": effort}
@@ -1619,10 +1652,6 @@ def extract_response_text(payload: dict[str, Any]) -> str:
                 return json.dumps(parsed, separators=(",", ":"), ensure_ascii=True)
             content = message.get("content")
             append_response_text_chunks(chunks, content)
-            if not chunks:
-                append_response_text_chunks(chunks, message.get("reasoning"))
-                append_response_text_chunks(chunks, message.get("reasoning_content"))
-                append_response_text_chunks(chunks, message.get("reasoning_details"))
         if chunks:
             return "\n".join(chunks)
 
@@ -1632,10 +1661,10 @@ def extract_response_text(payload: dict[str, Any]) -> str:
         for item in output:
             if not isinstance(item, dict):
                 continue
+            if item.get("type") == "reasoning":
+                continue
             content = item.get("content")
             append_response_text_chunks(chunks, content)
-            if not chunks:
-                append_response_text_chunks(chunks, item.get("summary"))
         if chunks:
             return "\n".join(chunks)
 
@@ -1647,6 +1676,13 @@ def extract_response_text(payload: dict[str, Any]) -> str:
 
 
 def parse_model_decision(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("status") == "incomplete":
+        raise ValueError("Provider response is incomplete")
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if isinstance(choice, dict) and choice.get("finish_reason") == "length":
+                raise ValueError("Provider response exhausted the output token limit")
     tool_input = extract_tool_input(payload)
     if tool_input is not None:
         return tool_input
