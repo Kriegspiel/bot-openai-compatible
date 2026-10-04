@@ -1251,6 +1251,54 @@ class BotTests(unittest.TestCase):
         self.assertNotIn("response_format", payload)
         self.assertEqual(payload["tools"][0]["function"]["name"], bot.ACTION_SCHEMA_NAME)
 
+    def test_refreshed_instance_templates_send_compatible_action_requests(self) -> None:
+        state = {"possible_actions": ["move"], "allowed_moves": ["e2e4"]}
+        for instance, model, tier, wire_api, effort, max_tokens in (
+            ("gpt56-luna", "gpt-6-luna", "T2", "chat_completions", "none", 2048),
+            ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "low", 8192),
+            ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "", 2048),
+            ("qwen36-flash", "qwen/qwen3.8-flash", "T3", "chat_completions", "", 2048),
+        ):
+            with self.subTest(instance=instance):
+                response = mock.Mock()
+                response.raise_for_status.return_value = None
+                if wire_api == "responses":
+                    response.json.return_value = {"output": [{"type": "function_call", "name": bot.ACTION_SCHEMA_NAME, "arguments": '{"m":["e2e4"]}'}]}
+                elif instance == "qwen36-flash":
+                    response.json.return_value = {"choices": [{"message": {"content": '{"m":["e2e4"]}'}}]}
+                else:
+                    response.json.return_value = {"choices": [{"message": {"tool_calls": [{"type": "function", "function": {"name": bot.ACTION_SCHEMA_NAME, "arguments": '{"m":["e2e4"]}'}}]}}]}
+                with mock.patch.dict("os.environ", {}, clear=True):
+                    bot.load_env_file(bot.BASE_DIR / "instances" / f"{instance}.env.example")
+                    os.environ["LLM_API_KEY"] = "test-key"
+                    self.assertEqual(os.environ["KRIEGSPIEL_LLM_BOT_TIER"], tier)
+                    with mock.patch.object(bot, "reserve_direct_openai_request", return_value=None):
+                        with mock.patch.object(bot, "settle_direct_openai_request", return_value=None):
+                            with mock.patch.object(bot, "http_post", return_value=response) as post:
+                                result = bot.call_llm(system_prompt="system", user_prompt="turn")
+                payload = post.call_args.kwargs["json"]
+                self.assertEqual(payload["model"], model)
+                if instance == "qwen36-flash":
+                    self.assertNotIn("tools", payload)
+                    self.assertNotIn("tool_choice", payload)
+                    self.assertEqual(payload["response_format"]["json_schema"]["schema"], bot.action_schema()["schema"])
+                else:
+                    self.assertNotIn("response_format", payload)
+                self.assertNotIn("text", payload)
+                if wire_api == "responses":
+                    self.assertTrue(post.call_args.args[0].endswith("/responses"))
+                    self.assertEqual(payload["reasoning"], {"effort": effort})
+                    self.assertEqual(payload["max_output_tokens"], max_tokens)
+                    self.assertTrue(payload["tools"][0]["strict"])
+                    self.assertNotIn("messages", payload)
+                else:
+                    self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
+                    self.assertEqual(payload.get("reasoning_effort", ""), effort)
+                    self.assertEqual(payload.get("max_completion_tokens", payload.get("max_tokens")), max_tokens)
+                    if instance != "qwen36-flash":
+                        self.assertTrue(payload["tools"][0]["function"]["strict"])
+                self.assertEqual(bot.normalize_ranked_decisions(bot.parse_model_decision(result), state), [{"action": "move", "uci": "e2e4"}])
+
     def test_model_call_semaphore_limits_concurrent_call_llm_execution(self) -> None:
         response = mock.Mock()
         response.raise_for_status.return_value = None

@@ -1,6 +1,6 @@
 # bot-openai-compatible
 
-Kriegspiel bot that asks an OpenAI-compatible Chat Completions model to choose the next action from the bot's private game state.
+Kriegspiel bot that asks an OpenAI-compatible model to choose the next action from the bot's private game state.
 
 This repo is intended as the shared scaffold for OpenRouter and direct provider experiments. The game logic and prompt format are aligned with the existing model bots; the provider, model name, endpoint, JSON mode, and pricing are environment configuration.
 
@@ -123,15 +123,32 @@ Current production direct OpenAI reasoning defaults:
 |---|---|---|---|
 | `gpt55` | GPT-5.5 | Chat Completions | `none` |
 | `gpt55-pro` | GPT-5.5 Pro | Responses API | `medium` |
-| `gpt56-luna` | GPT-5.6 Luna | Chat Completions | `none` |
-| `gpt56-terra` | GPT-5.6 Terra | Chat Completions | `none` |
-| `gpt56-sol` | GPT-5.6 Sol | Chat Completions | `none` |
+| `gpt56-luna` | GPT Luna (`gpt-6-luna`), T2 | Chat Completions | `none` |
+| `gpt56-sol` | GPT Sol (`gpt-6.1-sol`), T4 | Responses API | `low` |
+
+GPT-6.1 Sol requires Responses for function tool calls and does not support
+reasoning `none`. Its template uses `LLM_WIRE_API=responses`,
+`LLM_REASONING_EFFORT=low`, and a hard 8192-token total output limit covering
+reasoning and action output. GPT Luna retains Chat Completions with function
+tools and reasoning `none`, with a 2048-token output limit.
+
+The refreshed Gemini Flash and Qwen Flash T3 templates use
+`google/gemini-3.8-flash` and `qwen/qwen3.8-flash`. Qwen uses strict JSON text
+output (`LLM_USE_TOOLS=false`) because its thinking mode rejects forced tool
+choice. Instance filenames and bot
+usernames intentionally retain their old versioned names to preserve existing
+profiles, ratings, and game-history links; public display names have no model
+version. Prices in the templates are used for usage attribution and the
+existing direct OpenAI shared monthly cap.
+
+The current runtime release is recorded in `VERSION`. Version 1.0.0 starts
+explicit runtime versioning; older releases were identified only by git commit.
 
 Direct provider examples:
 
 | Provider | `LLM_API_BASE` | Example model |
 |---|---|---|
-| OpenAI | `https://api.openai.com/v1` | `gpt-5.6-luna` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-6-luna` |
 | Groq | `https://api.groq.com/openai/v1` | `llama-3.1-8b-instant` |
 | Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash-lite` |
 | DeepSeek | `https://api.deepseek.com` | `deepseek-v4-flash` |
