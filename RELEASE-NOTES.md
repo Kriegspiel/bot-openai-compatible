@@ -5,6 +5,17 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## 1.0.0 — Stable Model Names and Current Provider Templates
+
+- Upgrade GPT Luna to GPT-6 Luna at T2 and GPT Sol to GPT-6.1 Sol at T4.
+  Sol uses the existing Responses strict function tool path with low reasoning.
+- Upgrade Gemini Flash and Qwen Flash to current 3.8 models at T3.
+- Keep instance filenames and bot usernames stable for profile and history
+  continuity; update visible names and current token/cache pricing.
+- Validate each template's actual request format and legal-action parsing.
+- Start explicit runtime versioning in `VERSION`; earlier releases were
+  identified by git commit.
+
 ## Thread-Local HTTP Connection Reuse
 
 - **Connection Pooling**: reuse one `requests.Session` in the main loop and one
