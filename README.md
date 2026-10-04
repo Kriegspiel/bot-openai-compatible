@@ -197,7 +197,10 @@ LLM_HTTP_REFERER=https://kriegspiel.org
 LLM_X_OPENROUTER_TITLE=Kriegspiel
 ```
 
-`KRIEGSPIEL_MODEL_AVAILABILITY_PROVIDER` defaults to `openai` because the current backend availability endpoint only accepts existing provider labels. Keep that default until the backend supports arbitrary model providers.
+`KRIEGSPIEL_MODEL_AVAILABILITY_PROVIDER` defaults to `openai` for the existing
+compatibility labels. Grok's template explicitly uses `openrouter` to match its
+backend provider assignment. Availability reports must use the backend's expected
+label; a mismatch blocks new games even when the provider preflight succeeds.
 
 ## Gameplay Config
 
