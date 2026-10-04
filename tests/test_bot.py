@@ -1254,6 +1254,7 @@ class BotTests(unittest.TestCase):
         for instance, model, tier, wire_api, effort, max_tokens in (
             ("gpt56-luna", "gpt-6-luna", "T2", "responses", "max", 32768),
             ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "max", 32768),
+            ("gpt-astra", "gpt-6-astra", "T5", "responses", "max", 32768),
             ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "high", 32768),
             ("qwen36-flash", "qwen/qwen3.8-flash", "T3", "chat_completions", "", 32768),
         ):
@@ -1297,6 +1298,20 @@ class BotTests(unittest.TestCase):
                     if instance != "qwen36-flash":
                         self.assertTrue(payload["tools"][0]["function"]["strict"])
                 self.assertEqual(bot.normalize_ranked_decisions(bot.parse_model_decision(result), state), [{"action": "move", "uci": "e2e4"}])
+
+    def test_astra_template_usage_rates_timeout_and_shared_budget(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            bot.load_env_file(bot.BASE_DIR / "instances/gpt-astra.env.example")
+            self.assertEqual(os.environ["KRIEGSPIEL_BOT_USERNAME"], "llm_gpt_astra")
+            self.assertEqual(os.environ["KRIEGSPIEL_LLM_BOT_TIER"], "T5")
+            self.assertEqual(os.environ["OPENAI_MONTHLY_BUDGET_USD"], "18")
+            self.assertEqual(bot.llm_timeout_seconds(), 600)
+            self.assertEqual(bot.llm_wire_api(), "responses")
+            self.assertEqual(bot.llm_max_output_tokens(), 32768)
+            self.assertAlmostEqual(bot.llm_usage_cost_usd({
+                "input_tokens": 1000, "input_tokens_details": {"cached_tokens": 200},
+                "output_tokens": 400, "output_tokens_details": {"reasoning_tokens": 300},
+            }), 0.0282)
 
     def test_model_call_semaphore_limits_concurrent_call_llm_execution(self) -> None:
         response = mock.Mock()
@@ -1551,7 +1566,7 @@ class BotTests(unittest.TestCase):
 
     def test_active_model_templates_select_supported_highest_levels(self) -> None:
         named = {
-            "gpt56-luna": "max", "gpt56-sol": "max", "gpt55": "xhigh", "gpt55-pro": "xhigh",
+            "gpt56-luna": "max", "gpt56-sol": "max", "gpt-astra": "max", "gpt55": "xhigh", "gpt55-pro": "xhigh",
             "grok45": "xhigh", "gemini31-flash-lite": "high", "gemini31-pro-preview": "high",
             "gemini35-flash": "high", "gpt-oss-120b": "high", "mistral-medium35": "high",
             "nemotron-super": "medium", "nemotron-ultra": "high",
