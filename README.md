@@ -71,7 +71,7 @@ KRIEGSPIEL_BOT_DESCRIPTION=OpenRouter Gemini Flash-Lite Kriegspiel model bot.
 LLM_MODEL=google/gemini-2.5-flash-lite
 ```
 
-Checked-in T2/T3/T4 templates live under `instances/` with `.env.example` suffixes.
+Checked-in T2/T3/T4/T5 templates live under `instances/` with `.env.example` suffixes.
 Copy one to `.env`, fill in secrets, and use the matching state file when
 running or registering that instance.
 
@@ -94,10 +94,10 @@ LLM_API_KEY=<openrouter-api-key>
 ```
 
 The active direct OpenAI templates use the Responses API with strict function
-output. GPT Luna and GPT Sol use `max`; GPT-5.5 and GPT-5.5 Pro use `xhigh`,
-which is their highest supported level. Luna requires Responses for function
-calls when thinking is enabled. Each template bounds total output at 32768
-tokens, including reasoning. Timeouts are 300 seconds, or 600 for Pro.
+output. GPT Luna, GPT Sol and GPT Astra use `max`. Astra and Sol require
+Responses for tool calling; Luna requires it when thinking is enabled. Each
+template bounds total output at 32768 tokens, including reasoning. Timeouts are 300 seconds, or 600 for Astra.
+Retired GPT-5.5/Pro templates retain their historical configuration.
 The shared $18 monthly OpenAI ledger remains unchanged.
 
 ```env
@@ -176,6 +176,14 @@ LLM_INPUT_USD_PER_MILLION_TOKENS=0
 LLM_CACHED_INPUT_USD_PER_MILLION_TOKENS=0
 LLM_OUTPUT_USD_PER_MILLION_TOKENS=0
 ```
+
+`LLM_CACHE_WRITE_INPUT_USD_PER_MILLION_TOKENS` optionally prices Responses
+`usage.input_tokens_details.cache_write_tokens`; it defaults to the ordinary
+input rate for existing configurations. Cache reads and writes are subtracted
+from total input before charging ordinary input. The request reservation uses
+the highest input, cache-read, or cache-write rate, and settlement uses actual
+usage. Nonzero writes are reported as the backend's existing
+`cache_creation_input_tokens` field.
 
 Direct OpenAI calls are capped at `$18` per UTC calendar month across all bot
 processes on the host. The default shared ledger is
@@ -303,3 +311,15 @@ python3 -m unittest discover -s tests
 ## systemd
 
 A production host can run the bot as a service with `deploy/kriegspiel-openai-compatible-bot.service`.
+
+The T5 `gpt-astra` instance template uses stable username `llm_gpt_astra`,
+display name GPT Astra, model `gpt-6-astra`, standard execution and `max`
+reasoning effort. It sends strict function actions through the existing Responses
+client. Input/cache-read/cache-write/output prices are $10/$1/$12.50/$50 per million tokens;
+output includes reasoning tokens. Its 32768-token total output cap and 600-second
+timeout keep requests bounded, with the existing shared $18 monthly OpenAI
+ledger. Prompts above 272000 input tokens have higher provider rates; this
+Kriegspiel instance uses the runtime's bounded turn history. See the official
+[Astra specifications](https://developers.openai.com/api/docs/models/gpt-6-astra),
+[prompt-cache usage and pricing](https://developers.openai.com/api/docs/guides/prompt-caching),
+and [Responses reasoning/tool requirements](https://developers.openai.com/api/docs/guides/reasoning).
