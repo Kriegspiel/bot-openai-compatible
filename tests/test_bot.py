@@ -1337,6 +1337,17 @@ class BotTests(unittest.TestCase):
         self.assertLessEqual(max_active_calls, 2)
         self.assertEqual(max_active_calls, 2)
 
+    def test_grok_template_reports_backend_expected_openrouter_provider(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            bot.load_env_file(bot.BASE_DIR / "instances" / "grok45.env.example")
+            self.assertEqual(bot.llm_model(), "x-ai/grok-4.7")
+            self.assertEqual(bot.model_availability_provider(), "openrouter")
+            with mock.patch.object(bot, "post_json", return_value={"ok": True}) as post_json:
+                self.assertTrue(bot.report_model_availability(True, "ok"))
+            post_json.assert_called_once_with(
+                "/bots/availability", {"provider": "openrouter", "ready": True, "reason": "ok"},
+            )
+
     def test_report_model_availability_posts_status_and_throttles_repeats(self) -> None:
         with mock.patch.object(bot, "post_json", return_value={"ok": True}) as post_json:
             self.assertTrue(bot.report_model_availability(False, "http_429: insufficient_quota"))
