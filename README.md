@@ -94,7 +94,7 @@ LLM_API_KEY=<openrouter-api-key>
 ```
 
 The active direct OpenAI templates use the Responses API with strict function
-output. GPT Luna, GPT Sol and GPT Astra use `max`. Astra and Sol require
+output. GPT Luna, GPT Sol and GPT Astra use `xhigh`. Astra and Sol require
 Responses for tool calling; Luna requires it when thinking is enabled. Each
 template bounds total output at 32768 tokens, including reasoning. Timeouts are 300 seconds, or 600 for Astra.
 Retired GPT-5.5/Pro templates retain their historical configuration.
@@ -106,7 +106,7 @@ LLM_API_BASE=https://api.openai.com/v1
 LLM_MODEL=gpt-6-luna
 LLM_API_KEY=
 LLM_WIRE_API=responses
-LLM_REASONING_EFFORT=max
+LLM_REASONING_EFFORT=xhigh
 LLM_MAX_OUTPUT_TOKENS=32768
 LLM_TIMEOUT_SECONDS=300
 ```
@@ -118,15 +118,16 @@ For OpenRouter, the runtime sends its unified `reasoning` object:
 - `LLM_REASONING_MAX_TOKENS` sets a thinking budget, strictly below the total
   output cap. Do not combine a token budget with an effort setting.
 
-The Gemini templates, GPT-OSS, Mistral Medium, and Nemotron Ultra use `high`.
+The active Gemini templates and GPT-OSS use `medium`, one named level below
+their maximum `high`. Retired Mistral Medium and Nemotron Ultra retain `high`.
 Nemotron Super uses `medium`, its highest exposed regular reasoning mode.
 Gemma, Hermes 4, MiniMax M3, Nemotron Nano, and Qwen 3.7 use thinking enabled.
 Grok uses `xhigh`. Hermes 3, Llama Maverick, Mistral Large, Phi 4, and Qwen Plus
 have no reasoning control; their requests omit reasoning parameters.
 Qwen Flash uses a 24576-token thinking budget and 32768 total output tokens:
 Alibaba maps budgets above 16384 to native `xhigh`, while its much larger
-native default is constrained by our per-request cap. These are maximum effort
-settings with bounded token spending. A cap does not guarantee every difficult
+native default is constrained by our per-request cap. Active models use `xhigh` where supported or the named level below maximum,
+with bounded token spending. A cap does not guarantee every difficult
 request can finish; truncated and reasoning-only responses are rejected before
 choosing a game action.
 
@@ -313,7 +314,7 @@ python3 -m unittest discover -s tests
 A production host can run the bot as a service with `deploy/kriegspiel-openai-compatible-bot.service`.
 
 The T5 `gpt-astra` instance template uses stable username `llm_gpt_astra`,
-display name GPT Astra, model `gpt-6-astra`, standard execution and `max`
+display name GPT Astra, model `gpt-6-astra`, standard execution and `xhigh`
 reasoning effort. It sends strict function actions through the existing Responses
 client. Input/cache-read/cache-write/output prices are $10/$1/$12.50/$50 per million tokens;
 output includes reasoning tokens. Its 32768-token total output cap and 600-second

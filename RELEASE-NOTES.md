@@ -5,6 +5,10 @@ current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
 docs-only changes do not need entries unless they affect operator workflow.
 
+## 1.0.4 — Requested Reasoning Effort
+
+- Configure active GPT Luna/Sol/Astra templates with xhigh and Gemini/GPT-OSS with medium, the named level below their maximum. Preserve Grok xhigh, thinking-only controls, token caps, timeouts, and provider budgets.
+
 ## 1.0.0 — Stable Model Names and Current Provider Templates
 
 - Upgrade GPT Luna to GPT-6 Luna at T2 and GPT Sol to GPT-6.1 Sol at T4.
