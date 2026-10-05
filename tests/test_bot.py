@@ -1323,10 +1323,10 @@ class BotTests(unittest.TestCase):
     def test_refreshed_instance_templates_send_compatible_action_requests(self) -> None:
         state = {"possible_actions": ["move"], "allowed_moves": ["e2e4"]}
         for instance, model, tier, wire_api, effort, max_tokens in (
-            ("gpt56-luna", "gpt-6-luna", "T2", "responses", "max", 32768),
-            ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "max", 32768),
-            ("gpt-astra", "gpt-6-astra", "T5", "responses", "max", 32768),
-            ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "high", 32768),
+            ("gpt56-luna", "gpt-6-luna", "T2", "responses", "xhigh", 32768),
+            ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "xhigh", 32768),
+            ("gpt-astra", "gpt-6-astra", "T5", "responses", "xhigh", 32768),
+            ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "medium", 32768),
             ("qwen36-flash", "qwen/qwen3.8-flash", "T3", "chat_completions", "", 32768),
         ):
             with self.subTest(instance=instance):
@@ -1636,11 +1636,11 @@ class BotTests(unittest.TestCase):
                     bot.call_llm(system_prompt="system", user_prompt="turn")
                 post.assert_not_called()
 
-    def test_active_model_templates_select_supported_highest_levels(self) -> None:
+    def test_active_model_templates_select_requested_supported_levels(self) -> None:
         named = {
-            "gpt56-luna": "max", "gpt56-sol": "max", "gpt-astra": "max", "gpt55": "xhigh", "gpt55-pro": "xhigh",
-            "grok45": "xhigh", "gemini31-flash-lite": "high", "gemini31-pro-preview": "high",
-            "gemini35-flash": "high", "gpt-oss-120b": "high", "mistral-medium35": "high",
+            "gpt56-luna": "xhigh", "gpt56-sol": "xhigh", "gpt-astra": "xhigh", "gpt55": "xhigh", "gpt55-pro": "xhigh",
+            "grok45": "xhigh", "gemini31-flash-lite": "medium", "gemini31-pro-preview": "medium",
+            "gemini35-flash": "medium", "gpt-oss-120b": "medium", "mistral-medium35": "high",
             "nemotron-super": "medium", "nemotron-ultra": "high",
         }
         enabled = {"gemma4-31b", "hermes4-405b", "minimax-m3", "nemotron-nano", "qwen37-plus"}
