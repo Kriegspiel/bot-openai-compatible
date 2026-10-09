@@ -1327,7 +1327,7 @@ class BotTests(unittest.TestCase):
             ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "xhigh", 32768),
             ("gpt-astra", "gpt-6-astra", "T5", "responses", "xhigh", 32768),
             ("muse-glimmer", "meta/muse-glimmer-30b", "T2", "chat_completions", "xhigh", 16384),
-            ("muse-spark", "meta/muse-spark-1.3", "T3", "chat_completions", "xhigh", 32768),
+            ("muse-spark", "meta/muse-spark-1.3", "T3", "chat_completions", "xhigh", 65536),
             ("grok45", "x-ai/grok-4.7", "T4", "chat_completions", "xhigh", 32768),
             ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "medium", 32768),
             ("qwen36-flash", "qwen/qwen3.8-flash", "T3", "chat_completions", "", 32768),
@@ -1400,6 +1400,16 @@ class BotTests(unittest.TestCase):
                     self.assertTrue(tool["strict"] if wire == "responses" else tool["function"]["strict"])
                     self.assertEqual(payload["reasoning"], {"effort": "xhigh"})
                     self.assertEqual(bot.normalize_ranked_decisions(bot.parse_model_decision(result), state), [{"action": "move", "uci": "e2e4"}])
+
+    def test_spark_output_headroom_keeps_standard_route_reasoning_and_prices(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            bot.load_env_file(bot.BASE_DIR / "instances/muse-spark.env.example")
+            self.assertEqual(bot.llm_model(), "meta/muse-spark-1.3")
+            self.assertEqual(bot.llm_reasoning_effort(), "xhigh")
+            self.assertEqual(bot.llm_max_output_tokens(), 65536)
+            self.assertEqual(bot.llm_timeout_seconds(), 600)
+            self.assertEqual(bot.llm_input_usd_per_million_tokens(), 1.25)
+            self.assertEqual(bot.llm_output_usd_per_million_tokens(), 4.25)
 
     def test_astra_template_usage_rates_timeout_and_shared_budget(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):

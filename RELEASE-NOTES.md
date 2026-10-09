@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.0.7
+
+- Give standard Muse Spark 1.3 a bounded 65,536-token response and 600-second timeout so xhigh reasoning has room to finish and emit a validated game action. Retain its standard model, reasoning effort and token prices.
+
 ## 1.0.6
 
 - Use automatic tool selection for standard Muse Spark 1.3 through OpenRouter, matching Meta's supported API contract. Keep strict action schemas, local action validation, xhigh reasoning and the standard model ID.
