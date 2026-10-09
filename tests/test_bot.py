@@ -1351,6 +1351,8 @@ class BotTests(unittest.TestCase):
                                 result = bot.call_llm(system_prompt="system", user_prompt="turn")
                 payload = post.call_args.kwargs["json"]
                 self.assertEqual(payload["model"], model)
+                if instance == "muse-spark":
+                    self.assertEqual(payload["tool_choice"], "auto")
                 if instance == "qwen36-flash":
                     self.assertNotIn("tools", payload)
                     self.assertNotIn("tool_choice", payload)
@@ -1372,6 +1374,32 @@ class BotTests(unittest.TestCase):
                     if instance != "qwen36-flash":
                         self.assertTrue(payload["tools"][0]["function"]["strict"])
                 self.assertEqual(bot.normalize_ranked_decisions(bot.parse_model_decision(result), state), [{"action": "move", "uci": "e2e4"}])
+
+    def test_standard_spark_automatic_tools_parse_validated_actions_on_both_wire_apis(self) -> None:
+        state = {"possible_actions": ["move"], "allowed_moves": ["e2e4"]}
+        for wire in ("chat_completions", "responses"):
+            for text_response in (False, True):
+                with self.subTest(wire=wire, text_response=text_response):
+                    if wire == "responses":
+                        item = {"type": "message", "content": [{"type": "output_text", "text": '{"m":["e2e4"]}'}]} if text_response else {"type": "function_call", "name": bot.ACTION_SCHEMA_NAME, "arguments": '{"m":["e2e4"]}'}
+                        data = {"output": [item]}
+                    else:
+                        message = {"content": '{"m":["e2e4"]}'} if text_response else {"tool_calls": [{"type": "function", "function": {"name": bot.ACTION_SCHEMA_NAME, "arguments": '{"m":["e2e4"]}'}}]}
+                        data = {"choices": [{"message": message}]}
+                    response = mock.Mock()
+                    response.json.return_value = data
+                    with mock.patch.dict(os.environ, {}, clear=True):
+                        bot.load_env_file(bot.BASE_DIR / "instances/muse-spark.env.example")
+                        os.environ.update(LLM_API_KEY="fixture", LLM_WIRE_API=wire)
+                        with mock.patch.object(bot, "http_post", return_value=response) as post:
+                            result = bot.call_llm(system_prompt="system", user_prompt="turn")
+                    payload = post.call_args.kwargs["json"]
+                    self.assertEqual(payload["model"], "meta/muse-spark-1.3")
+                    self.assertEqual(payload["tool_choice"], "auto")
+                    tool = payload["tools"][0]
+                    self.assertTrue(tool["strict"] if wire == "responses" else tool["function"]["strict"])
+                    self.assertEqual(payload["reasoning"], {"effort": "xhigh"})
+                    self.assertEqual(bot.normalize_ranked_decisions(bot.parse_model_decision(result), state), [{"action": "move", "uci": "e2e4"}])
 
     def test_astra_template_usage_rates_timeout_and_shared_budget(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
