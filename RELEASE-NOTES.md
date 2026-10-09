@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.0.8
+
+- Include bounded response structure in empty-action errors to diagnose provider compatibility. Omit response text, reasoning, refusals and tool arguments from diagnostics.
+
 ## 1.0.7
 
 - Give standard Muse Spark 1.3 a bounded 65,536-token response and 600-second timeout so xhigh reasoning has room to finish and emit a validated game action. Retain its standard model, reasoning effort and token prices.

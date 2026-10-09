@@ -1661,6 +1661,51 @@ def append_response_text_chunks(chunks: list[str], value: Any) -> None:
                     chunks.append(text.strip())
 
 
+def response_shape(payload: dict[str, Any]) -> str:
+    """Describe response structure without logging content or tool arguments."""
+    def shape(value: Any) -> str:
+        return f"{type(value).__name__}:{len(value)}" if isinstance(value, (str, list, dict)) else type(value).__name__
+
+    def tag(value: Any) -> str:
+        return value if isinstance(value, str) and re.fullmatch(r"[\w.-]{1,80}", value) else shape(value)
+
+    result: dict[str, Any] = {"error_present": bool(payload.get("error"))}
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        result["choices"] = []
+        for choice in choices[:3]:
+            if not isinstance(choice, dict):
+                continue
+            entry: dict[str, Any] = {"finish_reason": tag(choice.get("finish_reason"))}
+            message = choice.get("message")
+            if isinstance(message, dict):
+                entry["message"] = {
+                    key: shape(message[key]) for key in
+                    ("content", "parsed", "refusal", "reasoning", "reasoning_content", "function_call")
+                    if key in message
+                }
+                calls = message.get("tool_calls")
+                if isinstance(calls, list):
+                    entry["tools"] = []
+                    for call in calls[:3]:
+                        if not isinstance(call, dict):
+                            continue
+                        function = call.get("function")
+                        entry["tools"].append({
+                            "type": tag(call.get("type")),
+                            "name": tag(function.get("name")) if isinstance(function, dict) else shape(function),
+                            "arguments": shape(function.get("arguments")) if isinstance(function, dict) else "absent",
+                        })
+            result["choices"].append(entry)
+    output = payload.get("output")
+    if isinstance(output, list):
+        result["output_types"] = [tag(item.get("type")) for item in output[:3] if isinstance(item, dict)]
+    for key in ("output_text", "text"):
+        if key in payload:
+            result[key] = shape(payload[key])
+    return json.dumps(result, separators=(",", ":"), ensure_ascii=True)
+
+
 def extract_response_text(payload: dict[str, Any]) -> str:
     choices = payload.get("choices")
     if isinstance(choices, list):
@@ -1696,7 +1741,7 @@ def extract_response_text(payload: dict[str, Any]) -> str:
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    raise ValueError("No text found in OpenAI-compatible response payload")
+    raise ValueError(f"No text found in OpenAI-compatible response payload; shape={response_shape(payload)}")
 
 
 def parse_model_decision(payload: dict[str, Any]) -> dict[str, Any]:

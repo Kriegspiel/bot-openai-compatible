@@ -129,6 +129,36 @@ class BotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No text"):
             bot.extract_response_text(payload)
 
+    def test_empty_response_diagnostic_excludes_private_values(self) -> None:
+        private = "private prompt and reasoning with secret credentials"
+        payload = {"error": {"message": private}, "choices": [{
+            "finish_reason": "stop", "message": {
+                "content": None, "refusal": private, "reasoning_content": private,
+                "tool_calls": [{"type": "function", "function": {
+                    "name": "another_tool", "arguments": private,
+                }}],
+            },
+        }]}
+        with self.assertRaises(ValueError) as raised:
+            bot.parse_model_decision(payload)
+        diagnostic = str(raised.exception)
+        self.assertNotIn(private, diagnostic)
+        self.assertIn('"finish_reason":"stop"', diagnostic)
+        self.assertIn('"name":"another_tool"', diagnostic)
+        self.assertIn('"content":"NoneType"', diagnostic)
+        self.assertIn('"error_present":true', diagnostic)
+
+    def test_response_diagnostic_bounds_provider_values(self) -> None:
+        private = "private content " * 1000
+        payload = {"choices": [{"finish_reason": private, "message": {
+            "tool_calls": [{"type": private, "function": {
+                "name": private, "arguments": private,
+            }}] * 100,
+        }}] * 100, "output": [{"type": private}] * 100}
+        diagnostic = bot.response_shape(payload)
+        self.assertNotIn("private content", diagnostic)
+        self.assertLess(len(diagnostic), 1500)
+
     def test_responses_final_answer_takes_precedence_over_reasoning_summary(self) -> None:
         payload = {"output": [
             {"type": "reasoning", "summary": [{"text": '{"m":["d2d4"]}'}]},
