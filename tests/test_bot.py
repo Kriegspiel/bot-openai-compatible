@@ -1326,6 +1326,9 @@ class BotTests(unittest.TestCase):
             ("gpt56-luna", "gpt-6-luna", "T2", "responses", "xhigh", 32768),
             ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "xhigh", 32768),
             ("gpt-astra", "gpt-6-astra", "T5", "responses", "xhigh", 32768),
+            ("muse-glimmer", "meta/muse-glimmer-30b", "T2", "chat_completions", "xhigh", 16384),
+            ("muse-spark", "meta/muse-spark-1.3", "T3", "chat_completions", "xhigh", 32768),
+            ("grok45", "x-ai/grok-4.7", "T4", "chat_completions", "xhigh", 32768),
             ("gemini35-flash", "google/gemini-3.8-flash", "T3", "chat_completions", "medium", 32768),
             ("qwen36-flash", "qwen/qwen3.8-flash", "T3", "chat_completions", "", 32768),
         ):
