@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.0.6
+
+- Use automatic tool selection for standard Muse Spark 1.3 through OpenRouter, matching Meta's supported API contract. Keep strict action schemas, local action validation, xhigh reasoning and the standard model ID.
+
 ## 1.0.5
 
 - Add reviewed Muse Glimmer 30B and standard Muse Spark 1.3 OpenRouter templates with xhigh reasoning; move the existing Grok instance to T4.

@@ -1546,6 +1546,9 @@ def call_llm(
     user_prompt: str,
 ) -> dict[str, Any]:
     model = llm_model()
+    # Meta currently rejects forced/named tool choices for standard Spark 1.3.
+    # https://dev.meta.ai/docs/tool-calling
+    spark_auto_tools = llm_provider() == "openrouter" and model == "meta/muse-spark-1.3"
     if llm_wire_api() == "responses":
         payload = {
             "model": model,
@@ -1558,7 +1561,7 @@ def call_llm(
         if llm_use_tools():
             payload.pop("text", None)
             payload["tools"] = [responses_action_tool()]
-            payload["tool_choice"] = {"type": "function", "name": ACTION_SCHEMA_NAME}
+            payload["tool_choice"] = "auto" if spark_auto_tools else {"type": "function", "name": ACTION_SCHEMA_NAME}
 
         return post_llm_request("responses", payload)
 
@@ -1575,7 +1578,7 @@ def call_llm(
     if llm_use_tools():
         payload.pop("response_format", None)
         payload["tools"] = [action_tool()]
-        payload["tool_choice"] = {"type": "function", "function": {"name": ACTION_SCHEMA_NAME}}
+        payload["tool_choice"] = "auto" if spark_auto_tools else {"type": "function", "function": {"name": ACTION_SCHEMA_NAME}}
 
     return post_llm_request("chat/completions", payload)
 
