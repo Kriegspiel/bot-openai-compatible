@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.0.5
+
+- Add reviewed Muse Glimmer 30B and standard Muse Spark 1.3 OpenRouter templates with xhigh reasoning; move the existing Grok instance to T4.
+
 These notes summarize the bot runtime release history reconstructed from the
 current repository state. Add a new section at the top for runtime,
 deployment-facing, or user-visible bot behavior changes. Test-only and
