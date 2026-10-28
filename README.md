@@ -72,7 +72,7 @@ LLM_MODEL=google/gemini-2.5-flash-lite
 ```
 
 Checked-in T2/T3/T4/T5 templates live under `instances/` with `.env.example` suffixes.
-The T4 `gpt56-terra` instance retains its state filename and uses canonical
+The T3 `gpt56-terra` instance retains its state filename and uses canonical
 username `llm_gpt_terra`, model `gpt-6.1-terra`, Responses API strict action
 tools and `xhigh` reasoning. Its template shares the existing $18 OpenAI
 monthly budget; standard input/cache-read/cache-write/output rates are

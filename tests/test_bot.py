@@ -1355,7 +1355,7 @@ class BotTests(unittest.TestCase):
         for instance, model, tier, wire_api, effort, max_tokens in (
             ("gpt56-luna", "gpt-6-luna", "T2", "responses", "xhigh", 32768),
             ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "xhigh", 32768),
-            ("gpt56-terra", "gpt-6.1-terra", "T4", "responses", "xhigh", 32768),
+            ("gpt56-terra", "gpt-6.1-terra", "T3", "responses", "xhigh", 32768),
             ("gpt-astra", "gpt-6-astra", "T5", "responses", "xhigh", 32768),
             ("muse-glimmer", "meta/muse-glimmer-30b", "T2", "chat_completions", "xhigh", 16384),
             ("muse-spark", "meta/muse-spark-1.3", "T3", "chat_completions", "xhigh", 65536),
@@ -1376,6 +1376,9 @@ class BotTests(unittest.TestCase):
                     bot.load_env_file(bot.BASE_DIR / "instances" / f"{instance}.env.example")
                     os.environ["LLM_API_KEY"] = "test-key"
                     self.assertEqual(os.environ["KRIEGSPIEL_LLM_BOT_TIER"], tier)
+                    if instance == "gpt56-terra":
+                        self.assertEqual(bot.bot_game_pick_probability(), 0.0005)
+                        self.assertEqual(bot.lobby_create_cooldown_seconds(), 10800)
                     with mock.patch.object(bot, "reserve_direct_openai_request", return_value=None):
                         with mock.patch.object(bot, "settle_direct_openai_request", return_value=None):
                             with mock.patch.object(bot, "http_post", return_value=response) as post:
