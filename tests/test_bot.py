@@ -1355,6 +1355,7 @@ class BotTests(unittest.TestCase):
         for instance, model, tier, wire_api, effort, max_tokens in (
             ("gpt56-luna", "gpt-6-luna", "T2", "responses", "xhigh", 32768),
             ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "xhigh", 32768),
+            ("gpt56-terra", "gpt-6.1-terra", "T4", "responses", "xhigh", 32768),
             ("gpt-astra", "gpt-6-astra", "T5", "responses", "xhigh", 32768),
             ("muse-glimmer", "meta/muse-glimmer-30b", "T2", "chat_completions", "xhigh", 16384),
             ("muse-spark", "meta/muse-spark-1.3", "T3", "chat_completions", "xhigh", 65536),
@@ -1709,7 +1710,7 @@ class BotTests(unittest.TestCase):
 
     def test_active_model_templates_select_requested_supported_levels(self) -> None:
         named = {
-            "gpt56-luna": "xhigh", "gpt56-sol": "xhigh", "gpt-astra": "xhigh", "gpt55": "xhigh", "gpt55-pro": "xhigh",
+            "gpt56-luna": "xhigh", "gpt56-sol": "xhigh", "gpt56-terra": "xhigh", "gpt-astra": "xhigh", "gpt55": "xhigh", "gpt55-pro": "xhigh",
             "grok45": "xhigh", "gemini31-flash-lite": "medium", "gemini31-pro-preview": "medium",
             "gemini35-flash": "medium", "gpt-oss-120b": "medium", "mistral-medium35": "high",
             "nemotron-super": "medium", "nemotron-ultra": "high",
