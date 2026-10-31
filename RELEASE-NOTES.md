@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.1.0 — Python 3.15
+
+- Move the supported runtime to CPython 3.15.2 and validate the complete test suite on that interpreter.
+
 ## 1.0.8
 
 - Include bounded response structure in empty-action errors to diagnose provider compatibility. Omit response text, reasoning, refusals and tool arguments from diagnostics.
