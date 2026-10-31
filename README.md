@@ -30,7 +30,7 @@ This repo is intended as the shared scaffold for OpenRouter and direct provider 
 ## Setup
 
 ```bash
-python3 -m venv .venv
+python3.15 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -329,3 +329,7 @@ Kriegspiel instance uses the runtime's bounded turn history. See the official
 [Astra specifications](https://developers.openai.com/api/docs/models/gpt-6-astra),
 [prompt-cache usage and pricing](https://developers.openai.com/api/docs/guides/prompt-caching),
 and [Responses reasoning/tool requirements](https://developers.openai.com/api/docs/guides/reasoning).
+
+### Python runtime
+
+Use CPython 3.15.2 (see `.python-version`). Production environments are managed by `ks-deploy python-runtime`; keep the system Python unchanged.
