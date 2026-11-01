@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.1.1 — Provider outage reporting
+
+- Keep provider failure reasons on one line within the backend availability API’s 500-character limit; describe HTML gateway errors by status instead of forwarding the page. Preserve unavailable status and report throttling during upstream outages.
+
 ## 1.1.0 — Python 3.15
 
 - Move the supported runtime to CPython 3.15.2 and validate the complete test suite on that interpreter.
