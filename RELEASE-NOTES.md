@@ -1,5 +1,9 @@
 # Release Notes
 
+## 1.1.3 — GPT-6.2 Sol and Astra
+
+- Run GPT Sol and GPT Astra on GPT-6.2 through the Responses API with their existing strict action schema and xhigh effort. Use Standard processing and account for 30-minute prompt cache writes in the shared OpenAI budget.
+
 ## 1.1.2 — Fallback retry progress
 
 - Exclude already rejected actions from local fallback selection for the current turn, including provider failure and unavailable-key paths. Preserve the existing preference order, provider limits, budgets and model configuration.
