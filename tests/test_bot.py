@@ -635,13 +635,22 @@ class BotTests(unittest.TestCase):
                 "input_tokens": 2000,
                 "input_tokens_details": {"cache_write_tokens": 2000},
                 "output_tokens": 400,
-            }), 0.045)
+            }), 0.036)
             self.assertAlmostEqual(bot.llm_usage_cost_usd({
                 "input_tokens": 2000,
                 "input_tokens_details": {"cached_tokens": 1000, "cache_write_tokens": 500},
                 "output_tokens": 400,
                 "output_tokens_details": {"reasoning_tokens": 300},
-            }), 0.03225)
+            }), 0.0254)
+
+    def test_sol_62_cache_writes_use_the_standard_write_rate(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            bot.load_env_file(bot.BASE_DIR / "instances/gpt56-sol.env.example")
+            self.assertAlmostEqual(bot.llm_usage_cost_usd({
+                "input_tokens": 2000,
+                "input_tokens_details": {"cached_tokens": 1000, "cache_write_tokens": 500},
+                "output_tokens": 400,
+            }), 0.00635)
 
     def test_cache_write_tokens_are_clamped_and_invalid_counts_ignored(self) -> None:
         usage = {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 80, "cache_write_tokens": 500}}
@@ -669,24 +678,24 @@ class BotTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             bot.load_env_file(bot.BASE_DIR / "instances/gpt-astra.env.example")
             with mock.patch.object(bot, "report_model_usage") as report:
-                bot.log_llm_usage(game_id="fixture", model="gpt-6-astra", payload={"usage": usage})
+                bot.log_llm_usage(game_id="fixture", model="gpt-6.2-astra", payload={"usage": usage})
         self.assertEqual(report.call_args.args[0]["cache_creation_input_tokens"], 1000)
-        self.assertAlmostEqual(report.call_args.args[0]["cost_usd"], 0.038)
+        self.assertAlmostEqual(report.call_args.args[0]["cost_usd"], 0.0302)
         self.assertNotIn("cache_write_input_tokens", report.call_args.args[0])
 
     def test_astra_reservation_covers_writes_and_settlement_charges_actual_usage(self) -> None:
-        payload = {"model": "gpt-6-astra", "input": "x" * 5000, "max_output_tokens": 32768}
+        payload = {"model": "gpt-6.2-astra", "input": "x" * 5000, "max_output_tokens": 32768}
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {}, clear=True):
                 bot.load_env_file(bot.BASE_DIR / "instances/gpt-astra.env.example")
                 os.environ["OPENAI_MONTHLY_BUDGET_STATE_PATH"] = str(Path(tmp) / "openai.json")
                 budget = bot.reserve_direct_openai_request(payload)
                 expected = bot.estimate_request_cost_upper_bound_usd(
-                    payload, input_usd_per_million_tokens=12.5, output_usd_per_million_tokens=50,
+                    payload, input_usd_per_million_tokens=10, output_usd_per_million_tokens=40,
                     maximum_output_tokens=32768,
                 )
                 old_maximum = bot.estimate_request_cost_upper_bound_usd(
-                    payload, input_usd_per_million_tokens=10, output_usd_per_million_tokens=50,
+                    payload, input_usd_per_million_tokens=8, output_usd_per_million_tokens=40,
                     maximum_output_tokens=32768,
                 )
                 self.assertIsNotNone(budget)
@@ -695,7 +704,7 @@ class BotTests(unittest.TestCase):
                 snapshot = bot.settle_direct_openai_request(budget, {"usage": {
                     "input_tokens": 2000, "input_tokens_details": {"cache_write_tokens": 2000}, "output_tokens": 400,
                 }})
-                self.assertAlmostEqual(snapshot.spent_usd, 0.045)
+                self.assertAlmostEqual(snapshot.spent_usd, 0.036)
                 self.assertEqual(snapshot.reserved_usd, 0)
                 self.assertEqual(snapshot.limit_usd, 18)
 
@@ -1354,9 +1363,9 @@ class BotTests(unittest.TestCase):
         state = {"possible_actions": ["move"], "allowed_moves": ["e2e4"]}
         for instance, model, tier, wire_api, effort, max_tokens in (
             ("gpt56-luna", "gpt-6-luna", "T2", "responses", "xhigh", 32768),
-            ("gpt56-sol", "gpt-6.1-sol", "T4", "responses", "xhigh", 32768),
+            ("gpt56-sol", "gpt-6.2-sol", "T4", "responses", "xhigh", 32768),
             ("gpt56-terra", "gpt-6.1-terra", "T3", "responses", "xhigh", 32768),
-            ("gpt-astra", "gpt-6-astra", "T5", "responses", "xhigh", 32768),
+            ("gpt-astra", "gpt-6.2-astra", "T5", "responses", "xhigh", 32768),
             ("muse-glimmer", "meta/muse-glimmer-30b", "T2", "chat_completions", "xhigh", 16384),
             ("muse-spark", "meta/muse-spark-1.3", "T3", "chat_completions", "xhigh", 65536),
             ("grok45", "x-ai/grok-4.7", "T4", "chat_completions", "xhigh", 32768),
@@ -1398,6 +1407,12 @@ class BotTests(unittest.TestCase):
                     self.assertTrue(post.call_args.args[0].endswith("/responses"))
                     self.assertEqual(payload["reasoning"], {"effort": effort})
                     self.assertEqual(payload["max_output_tokens"], max_tokens)
+                    if instance in {"gpt56-sol", "gpt-astra"}:
+                        self.assertEqual(payload["service_tier"], "default")
+                        self.assertEqual(payload["prompt_cache_options"], {"ttl": "30m"})
+                    else:
+                        self.assertNotIn("service_tier", payload)
+                        self.assertNotIn("prompt_cache_options", payload)
                     self.assertTrue(payload["tools"][0]["strict"])
                     self.assertNotIn("messages", payload)
                 else:
@@ -1454,11 +1469,11 @@ class BotTests(unittest.TestCase):
             self.assertEqual(bot.llm_timeout_seconds(), 600)
             self.assertEqual(bot.llm_wire_api(), "responses")
             self.assertEqual(bot.llm_max_output_tokens(), 32768)
-            self.assertEqual(bot.llm_cache_write_input_usd_per_million_tokens(), 12.5)
+            self.assertEqual(bot.llm_cache_write_input_usd_per_million_tokens(), 10)
             self.assertAlmostEqual(bot.llm_usage_cost_usd({
                 "input_tokens": 1000, "input_tokens_details": {"cached_tokens": 200},
                 "output_tokens": 400, "output_tokens_details": {"reasoning_tokens": 300},
-            }), 0.0282)
+            }), 0.02248)
 
     def test_model_call_semaphore_limits_concurrent_call_llm_execution(self) -> None:
         response = mock.Mock()

@@ -318,17 +318,21 @@ python3 -m unittest discover -s tests
 
 A production host can run the bot as a service with `deploy/kriegspiel-openai-compatible-bot.service`.
 
-The T5 `gpt-astra` instance template uses stable username `llm_gpt_astra`,
-display name GPT Astra, model `gpt-6-astra`, standard execution and `xhigh`
-reasoning effort. It sends strict function actions through the existing Responses
-client. Input/cache-read/cache-write/output prices are $10/$1/$12.50/$50 per million tokens;
-output includes reasoning tokens. Its 32768-token total output cap and 600-second
-timeout keep requests bounded, with the existing shared $18 monthly OpenAI
-ledger. Prompts above 272000 input tokens have higher provider rates; this
-Kriegspiel instance uses the runtime's bounded turn history. See the official
-[Astra specifications](https://developers.openai.com/api/docs/models/gpt-6-astra),
-[prompt-cache usage and pricing](https://developers.openai.com/api/docs/guides/prompt-caching),
-and [Responses reasoning/tool requirements](https://developers.openai.com/api/docs/guides/reasoning).
+The T4 `gpt56-sol` and T5 `gpt-astra` instances use `gpt-6.2-sol` and
+`gpt-6.2-astra` through Responses strict action tools at `xhigh`. They
+retain their existing account usernames, 32,768-token output caps, and
+300-second and 600-second timeouts, respectively. Both use Standard processing
+and the shared $18 monthly OpenAI ledger.
+
+| Model | Input | Cache read | 30-minute cache write | Output |
+|---|---:|---:|---:|---:|
+| GPT-6.2 Sol | $2 | $0.10 | $2.50 | $10 |
+| GPT-6.2 Astra | $8 | $0.40 | $10 | $40 |
+
+Rates are per million tokens. Output includes reasoning. These instances
+send bounded, short-context turn snapshots. See
+[OpenAI pricing](https://developers.openai.com/api/docs/pricing) and
+[prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 
 ### Python runtime
 

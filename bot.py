@@ -1566,6 +1566,10 @@ def call_llm(
             "input": user_prompt,
             "max_output_tokens": llm_max_output_tokens(),
         }
+        if llm_provider() == "openai" and model in {"gpt-6.2-sol", "gpt-6.2-astra"}:
+            # Match the Standard processing and cache-write rates used by the budget ledger.
+            payload["service_tier"] = "default"
+            payload["prompt_cache_options"] = {"ttl": "30m"}
         apply_responses_text_format(payload)
         apply_responses_reasoning_effort(payload)
         if llm_use_tools():
